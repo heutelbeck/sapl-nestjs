@@ -1,0 +1,46 @@
+// Module
+export { SaplModule } from './sapl.module';
+export { SAPL_MODULE_OPTIONS } from './sapl.constants';
+export {
+  SaplModuleOptions,
+  SaplModuleAsyncOptions,
+  SaplOptionsFactory,
+} from './sapl.interfaces';
+
+// PDP
+export { PdpService } from './pdp.service';
+
+// Decorators
+export { PreEnforce, PRE_ENFORCE_KEY } from './PreEnforce';
+export { PostEnforce, POST_ENFORCE_KEY } from './PostEnforce';
+
+// Options and context
+export {
+  EnforceOptions,
+  SubscriptionField,
+  OnDenyHandler,
+} from './EnforceOptions';
+export { SubscriptionContext } from './SubscriptionContext';
+
+// Constraint handler API
+export {
+  Signal,
+  Responsible,
+  RunnableConstraintHandlerProvider,
+  ConsumerConstraintHandlerProvider,
+  MappingConstraintHandlerProvider,
+  ErrorHandlerProvider,
+  ErrorMappingConstraintHandlerProvider,
+  FilterPredicateConstraintHandlerProvider,
+  MethodInvocationConstraintHandlerProvider,
+} from './constraints/api/index';
+
+// Constraint handler registration
+export {
+  SaplConstraintHandler,
+  ConstraintHandlerType,
+} from './constraints/SaplConstraintHandler';
+
+// Constraint handler service
+export { ConstraintEnforcementService } from './constraints/ConstraintEnforcementService';
+export { ConstraintHandlerBundle } from './constraints/ConstraintHandlerBundle';

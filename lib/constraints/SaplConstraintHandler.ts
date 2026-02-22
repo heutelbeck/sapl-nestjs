@@ -1,0 +1,13 @@
+import { DiscoveryService } from '@nestjs/core';
+
+export type ConstraintHandlerType =
+  | 'runnable'
+  | 'consumer'
+  | 'mapping'
+  | 'errorHandler'
+  | 'errorMapping'
+  | 'filterPredicate'
+  | 'methodInvocation';
+
+export const SaplConstraintHandler =
+  DiscoveryService.createDecorator<ConstraintHandlerType>();

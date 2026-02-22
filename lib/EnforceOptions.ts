@@ -1,0 +1,34 @@
+import { SubscriptionContext } from './SubscriptionContext';
+
+/**
+ * A subscription field value: either a literal (sent as-is to the PDP) or a
+ * callback that receives the request-time SubscriptionContext and returns
+ * the value dynamically.
+ *
+ * Examples:
+ *   action: 'read'                                       // literal
+ *   resource: (ctx) => ({ id: ctx.params.id })            // callback
+ *   subject: (ctx) => ctx.request.user                    // callback
+ */
+export type SubscriptionField<T = any> = T | ((ctx: SubscriptionContext) => T);
+
+/**
+ * Callback invoked when the PDP denies access. Receives the request-time context
+ * and the PDP decision. The return value becomes the HTTP response body (with 200).
+ * If not provided, a ForbiddenException (403) is thrown.
+ */
+export type OnDenyHandler = (ctx: SubscriptionContext, decision: any) => any;
+
+/**
+ * Options for building the SAPL authorization subscription.
+ * The first four fields correspond to the four subscription components.
+ * All fields are optional -- sensible defaults are derived at runtime.
+ */
+export interface EnforceOptions {
+  subject?: SubscriptionField;
+  action?: SubscriptionField;
+  resource?: SubscriptionField;
+  environment?: SubscriptionField;
+  secrets?: SubscriptionField;
+  onDeny?: OnDenyHandler;
+}

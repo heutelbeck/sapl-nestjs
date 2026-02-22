@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Test
+coverage/
+
+# npm
+*.tgz
