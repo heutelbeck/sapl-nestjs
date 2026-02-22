@@ -5,7 +5,7 @@ Attribute-Based Access Control (ABAC) for NestJS using SAPL (Streaming Attribute
 ## Installation
 
 ```bash
-npm install @sapl/nestjs
+npm install @sapl/nestjs @toss/nestjs-aop nestjs-cls
 ```
 
 ## Setup
@@ -53,16 +53,17 @@ export class AppModule {}
 `SaplModule` registers everything automatically:
 - `PdpService` for PDP communication
 - `ConstraintEnforcementService` for constraint handler discovery and orchestration
-- `PreEnforceInterceptor` and `PostEnforceInterceptor` as global interceptors
+- `PreEnforceAspect` and `PostEnforceAspect` via `@toss/nestjs-aop`
+- `ClsModule` from `nestjs-cls` for request context propagation
 - Built-in `ContentFilteringProvider` and `ContentFilterPredicateProvider`
 
-The interceptors are globally registered but only activate on handlers decorated with `@PreEnforce()` or `@PostEnforce()`. Undecorated handlers pass through unaffected.
+The decorators work on any injectable class method -- controllers, services, repositories, etc. Methods without `@PreEnforce()` or `@PostEnforce()` are unaffected.
 
 ## Decorators
 
 ### @PreEnforce
 
-Authorizes **before** the handler executes. The handler only runs on PERMIT.
+Authorizes **before** the method executes. The method only runs on PERMIT. Works on any injectable class method.
 
 ```typescript
 import { Controller, Get } from '@nestjs/common';
@@ -78,11 +79,11 @@ export class PatientController {
 }
 ```
 
-Use `@PreEnforce` for handlers with side effects (database writes, emails) that should not execute when access is denied.
+Use `@PreEnforce` for methods with side effects (database writes, emails) that should not execute when access is denied.
 
 ### @PostEnforce
 
-Authorizes **after** the handler executes. The handler always runs; its return value is available via `ctx.returnValue` in subscription field callbacks.
+Authorizes **after** the method executes. The method always runs; its return value is available via `ctx.returnValue` in subscription field callbacks.
 
 ```typescript
 @PostEnforce({
@@ -116,6 +117,7 @@ The `SubscriptionContext` provides:
 | `handler`     | `string`                   | Handler method name                                      |
 | `controller`  | `string`                   | Controller class name                                    |
 | `returnValue` | `any`                      | Handler return value (`@PostEnforce` only)                |
+| `args`        | `any[]`                    | Method arguments                                         |
 
 #### Default Values
 
@@ -253,6 +255,32 @@ export class AppController {
   }
 }
 ```
+
+## Advanced Configuration
+
+### Using nestjs-cls in Your Application
+
+`SaplModule` manages `ClsModule` from `nestjs-cls` automatically. CLS middleware is mounted globally and the HTTP request is stored at the `CLS_REQ` key.
+
+**If you already use `nestjs-cls`:** Remove your own `ClsModule.forRoot()` call. Since `ClsService` is globally available, inject it anywhere to set/get custom CLS values as before. Your interceptors and guards that use `ClsService` continue to work unchanged.
+
+**If you need custom CLS options** (custom `idGenerator`, `setup` callback, guard/interceptor mode instead of middleware): Pass them via the `cls` option in `SaplModule.forRoot()`:
+
+```typescript
+SaplModule.forRoot({
+  baseUrl: 'http://localhost:8443',
+  cls: {
+    middleware: {
+      mount: true,
+      setup: (cls, req) => {
+        cls.set('TENANT_ID', req.headers['x-tenant-id']);
+      },
+    },
+  },
+})
+```
+
+The `cls` options are merged into the default configuration (`{ global: true, middleware: { mount: true } }`), so you only need to specify the parts you want to customize.
 
 ## License
 

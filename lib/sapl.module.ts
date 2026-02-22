@@ -1,10 +1,12 @@
 import { DynamicModule, Module } from '@nestjs/common';
-import { APP_INTERCEPTOR, DiscoveryModule } from '@nestjs/core';
+import { DiscoveryModule } from '@nestjs/core';
+import { AopModule } from '@toss/nestjs-aop';
+import { ClsModule } from 'nestjs-cls';
 import { SAPL_MODULE_OPTIONS } from './sapl.constants';
 import { SaplModuleOptions, SaplModuleAsyncOptions } from './sapl.interfaces';
 import { PdpService } from './pdp.service';
-import { PreEnforceInterceptor } from './PreEnforceInterceptor';
-import { PostEnforceInterceptor } from './PostEnforceInterceptor';
+import { PreEnforceAspect } from './PreEnforceAspect';
+import { PostEnforceAspect } from './PostEnforceAspect';
 import { ConstraintEnforcementService } from './constraints/ConstraintEnforcementService';
 import { ContentFilteringProvider } from './constraints/providers/ContentFilteringProvider';
 import { ContentFilterPredicateProvider } from './constraints/providers/ContentFilterPredicateProvider';
@@ -14,8 +16,8 @@ const SHARED_PROVIDERS = [
   ConstraintEnforcementService,
   ContentFilteringProvider,
   ContentFilterPredicateProvider,
-  { provide: APP_INTERCEPTOR, useClass: PreEnforceInterceptor },
-  { provide: APP_INTERCEPTOR, useClass: PostEnforceInterceptor },
+  PreEnforceAspect,
+  PostEnforceAspect,
 ];
 
 @Module({})
@@ -23,7 +25,15 @@ export class SaplModule {
   static forRoot(options: SaplModuleOptions): DynamicModule {
     return {
       module: SaplModule,
-      imports: [DiscoveryModule],
+      imports: [
+        DiscoveryModule,
+        AopModule,
+        ClsModule.forRoot({
+          global: true,
+          middleware: { mount: true },
+          ...options.cls,
+        }),
+      ],
       providers: [
         { provide: SAPL_MODULE_OPTIONS, useValue: options },
         ...SHARED_PROVIDERS,
@@ -36,7 +46,15 @@ export class SaplModule {
   static forRootAsync(asyncOptions: SaplModuleAsyncOptions): DynamicModule {
     return {
       module: SaplModule,
-      imports: [DiscoveryModule, ...(asyncOptions.imports ?? [])],
+      imports: [
+        DiscoveryModule,
+        AopModule,
+        ClsModule.forRoot({
+          global: true,
+          middleware: { mount: true },
+        }),
+        ...(asyncOptions.imports ?? []),
+      ],
       providers: [
         {
           provide: SAPL_MODULE_OPTIONS,

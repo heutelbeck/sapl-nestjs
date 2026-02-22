@@ -11,8 +11,8 @@ export {
 export { PdpService } from './pdp.service';
 
 // Decorators
-export { PreEnforce, PRE_ENFORCE_KEY } from './PreEnforce';
-export { PostEnforce, POST_ENFORCE_KEY } from './PostEnforce';
+export { PreEnforce } from './PreEnforce';
+export { PostEnforce } from './PostEnforce';
 
 // Options and context
 export {

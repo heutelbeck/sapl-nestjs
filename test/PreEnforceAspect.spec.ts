@@ -1,107 +1,94 @@
 import { ForbiddenException } from '@nestjs/common';
-import { Reflector } from '@nestjs/core';
-import { lastValueFrom } from 'rxjs';
-import { PreEnforceInterceptor } from '../lib/PreEnforceInterceptor';
+import { PreEnforceAspect } from '../lib/PreEnforceAspect';
 import { PdpService } from '../lib/pdp.service';
 import { ConstraintEnforcementService } from '../lib/constraints/ConstraintEnforcementService';
-import {
-  createMockBundle,
-  createMockExecutionContext,
-  createMockCallHandler,
-} from './test-helpers';
+import { createMockBundle, createMockClsService } from './test-helpers';
 
-describe('PreEnforceInterceptor', () => {
-  let reflector: Reflector;
+describe('PreEnforceAspect', () => {
   let pdpService: Partial<PdpService>;
   let constraintService: Partial<ConstraintEnforcementService>;
-  let interceptor: PreEnforceInterceptor;
+  let aspect: PreEnforceAspect;
+  let clsMock: ReturnType<typeof createMockClsService>;
 
   beforeEach(() => {
-    reflector = new Reflector();
     pdpService = { decideOnce: jest.fn() };
     constraintService = {
       preEnforceBundleFor: jest.fn(),
       bestEffortBundleFor: jest.fn(),
     };
-    interceptor = new PreEnforceInterceptor(
-      reflector,
+    clsMock = createMockClsService();
+    aspect = new PreEnforceAspect(
       pdpService as PdpService,
+      clsMock as any,
       constraintService as ConstraintEnforcementService,
     );
   });
 
-  test('whenNoMetadataThenPassesThroughWithoutCallingPdp', async () => {
-    jest.spyOn(reflector, 'get').mockReturnValue(undefined);
-    const next = createMockCallHandler({ data: 'passthrough' });
+  function wrapMethod(
+    method: (...args: any[]) => any,
+    metadata = {},
+    methodName = 'testHandler',
+    instance = { constructor: { name: 'TestController' } },
+  ) {
+    return aspect.wrap({ method, metadata, methodName, instance } as any);
+  }
 
-    const result$ = await interceptor.intercept(createMockExecutionContext(), next);
-    const result = await lastValueFrom(result$);
-
-    expect(result).toEqual({ data: 'passthrough' });
-    expect(pdpService.decideOnce).not.toHaveBeenCalled();
-  });
-
-  test('whenPermitWithNoConstraintsThenHandlerExecutesAndBundleLifecycleRuns', async () => {
-    jest.spyOn(reflector, 'get').mockReturnValue({});
+  test('whenPermitWithNoConstraintsThenMethodExecutesAndBundleLifecycleRuns', async () => {
     (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
     const bundle = createMockBundle();
     (constraintService.preEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
-    const next = createMockCallHandler({ data: 'success' });
+    const method = jest.fn().mockResolvedValue({ data: 'success' });
 
-    const result$ = await interceptor.intercept(createMockExecutionContext(), next);
-    const result = await lastValueFrom(result$);
+    const wrapped = wrapMethod(method);
+    const result = await wrapped();
 
     expect(result).toEqual({ data: 'success' });
     expect(bundle.handleOnDecisionConstraints).toHaveBeenCalled();
     expect(bundle.handleMethodInvocationHandlers).toHaveBeenCalled();
-    expect(next.handle).toHaveBeenCalled();
+    expect(method).toHaveBeenCalled();
   });
 
-  test('whenDenyThenThrowsForbiddenExceptionAndHandlerNotCalled', async () => {
-    jest.spyOn(reflector, 'get').mockReturnValue({});
+  test('whenDenyThenThrowsForbiddenExceptionAndMethodNotCalled', async () => {
     (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'DENY' });
     const bundle = createMockBundle();
     (constraintService.bestEffortBundleFor as jest.Mock).mockReturnValue(bundle);
-    const next = createMockCallHandler();
+    const method = jest.fn();
 
-    await expect(interceptor.intercept(createMockExecutionContext(), next))
-      .rejects.toThrow(ForbiddenException);
-    expect(next.handle).not.toHaveBeenCalled();
+    const wrapped = wrapMethod(method);
+    await expect(wrapped()).rejects.toThrow(ForbiddenException);
+    expect(method).not.toHaveBeenCalled();
   });
 
-  test('whenDenyWithOnDenyThenReturnsCustomResponseAndHandlerNotCalled', async () => {
+  test('whenDenyWithOnDenyThenReturnsCustomResponseAndMethodNotCalled', async () => {
     const onDeny = jest.fn().mockReturnValue({ error: 'denied' });
-    jest.spyOn(reflector, 'get').mockReturnValue({ onDeny });
     (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'DENY' });
     const bundle = createMockBundle();
     (constraintService.bestEffortBundleFor as jest.Mock).mockReturnValue(bundle);
-    const next = createMockCallHandler();
+    const method = jest.fn();
 
-    const result$ = await interceptor.intercept(createMockExecutionContext(), next);
-    const result = await lastValueFrom(result$);
+    const wrapped = wrapMethod(method, { onDeny });
+    const result = await wrapped();
 
     expect(result).toEqual({ error: 'denied' });
     expect(onDeny).toHaveBeenCalled();
-    expect(next.handle).not.toHaveBeenCalled();
+    expect(method).not.toHaveBeenCalled();
   });
 
   test.each([
     { decision: 'NOT_APPLICABLE', label: 'notApplicable' },
     { decision: 'INDETERMINATE', label: 'indeterminate' },
   ])('when$labelThenThrowsForbiddenException', async ({ decision }) => {
-    jest.spyOn(reflector, 'get').mockReturnValue({});
     (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision });
     const bundle = createMockBundle();
     (constraintService.bestEffortBundleFor as jest.Mock).mockReturnValue(bundle);
-    const next = createMockCallHandler();
+    const method = jest.fn();
 
-    await expect(interceptor.intercept(createMockExecutionContext(), next))
-      .rejects.toThrow(ForbiddenException);
-    expect(next.handle).not.toHaveBeenCalled();
+    const wrapped = wrapMethod(method);
+    await expect(wrapped()).rejects.toThrow(ForbiddenException);
+    expect(method).not.toHaveBeenCalled();
   });
 
   test('whenPermitWithObligationsThenBundleTransformsResponse', async () => {
-    jest.spyOn(reflector, 'get').mockReturnValue({});
     (pdpService.decideOnce as jest.Mock).mockResolvedValue({
       decision: 'PERMIT',
       obligations: [{ type: 'testObligation' }],
@@ -110,16 +97,15 @@ describe('PreEnforceInterceptor', () => {
       handleAllOnNextConstraints: jest.fn((v) => ({ ...v, transformed: true })),
     } as any);
     (constraintService.preEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
-    const next = createMockCallHandler({ data: 'original' });
+    const method = jest.fn().mockResolvedValue({ data: 'original' });
 
-    const result$ = await interceptor.intercept(createMockExecutionContext(), next);
-    const result = await lastValueFrom(result$);
+    const wrapped = wrapMethod(method);
+    const result = await wrapped();
 
     expect(result).toEqual({ data: 'original', transformed: true });
   });
 
   test('whenUnhandledObligationOnPermitThenThrowsForbiddenException', async () => {
-    jest.spyOn(reflector, 'get').mockReturnValue({});
     (pdpService.decideOnce as jest.Mock).mockResolvedValue({
       decision: 'PERMIT',
       obligations: [{ type: 'unknownObligation' }],
@@ -127,16 +113,15 @@ describe('PreEnforceInterceptor', () => {
     (constraintService.preEnforceBundleFor as jest.Mock).mockImplementation(() => {
       throw new ForbiddenException('unhandled');
     });
-    const next = createMockCallHandler();
+    const method = jest.fn();
 
-    await expect(interceptor.intercept(createMockExecutionContext(), next))
-      .rejects.toThrow(ForbiddenException);
-    expect(next.handle).not.toHaveBeenCalled();
+    const wrapped = wrapMethod(method);
+    await expect(wrapped()).rejects.toThrow(ForbiddenException);
+    expect(method).not.toHaveBeenCalled();
   });
 
   test('whenUnhandledObligationOnPermitWithOnDenyThenCallsOnDeny', async () => {
     const onDeny = jest.fn().mockReturnValue({ fallback: true });
-    jest.spyOn(reflector, 'get').mockReturnValue({ onDeny });
     (pdpService.decideOnce as jest.Mock).mockResolvedValue({
       decision: 'PERMIT',
       obligations: [{ type: 'unknownObligation' }],
@@ -144,24 +129,24 @@ describe('PreEnforceInterceptor', () => {
     (constraintService.preEnforceBundleFor as jest.Mock).mockImplementation(() => {
       throw new ForbiddenException('unhandled');
     });
-    const next = createMockCallHandler();
+    const method = jest.fn();
 
-    const result$ = await interceptor.intercept(createMockExecutionContext(), next);
-    const result = await lastValueFrom(result$);
+    const wrapped = wrapMethod(method, { onDeny });
+    const result = await wrapped();
 
     expect(result).toEqual({ fallback: true });
     expect(onDeny).toHaveBeenCalled();
-    expect(next.handle).not.toHaveBeenCalled();
+    expect(method).not.toHaveBeenCalled();
   });
 
   test('whenMethodInvocationHandlerThenReceivesRequestObject', async () => {
-    jest.spyOn(reflector, 'get').mockReturnValue({});
     (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
     const bundle = createMockBundle();
     (constraintService.preEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
-    const next = createMockCallHandler({ data: 'test' });
+    const method = jest.fn().mockResolvedValue({ data: 'test' });
 
-    await interceptor.intercept(createMockExecutionContext(), next);
+    const wrapped = wrapMethod(method);
+    await wrapped();
 
     expect(bundle.handleMethodInvocationHandlers).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -174,32 +159,26 @@ describe('PreEnforceInterceptor', () => {
     );
   });
 
-  test('whenMethodInvocationHandlerMutatesRequestThenHandlerSeesChanges', async () => {
-    jest.spyOn(reflector, 'get').mockReturnValue({});
+  test('whenMethodInvocationHandlerMutatesRequestThenAspectSeesChanges', async () => {
     (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
 
-    const capturedRequest: any[] = [];
     const bundle = createMockBundle({
       handleMethodInvocationHandlers: jest.fn((request) => {
         request.body = { injected: true };
         request.params.id = 'forced-id';
-        capturedRequest.push(request);
       }),
     } as any);
     (constraintService.preEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
-    const next = createMockCallHandler({ data: 'test' });
-    const context = createMockExecutionContext();
+    const method = jest.fn().mockResolvedValue({ data: 'test' });
 
-    await interceptor.intercept(context, next);
+    const wrapped = wrapMethod(method);
+    await wrapped();
 
-    const request = context.switchToHttp().getRequest();
-    expect(request.body).toEqual({ injected: true });
-    expect(request.params.id).toBe('forced-id');
-    expect(capturedRequest[0]).toBe(request);
+    expect(clsMock.request.body).toEqual({ injected: true });
+    expect(clsMock.request.params.id).toBe('forced-id');
   });
 
   test('whenPermitWithResourceReplacementThenResponseReplaced', async () => {
-    jest.spyOn(reflector, 'get').mockReturnValue({});
     (pdpService.decideOnce as jest.Mock).mockResolvedValue({
       decision: 'PERMIT',
       resource: { replaced: true },
@@ -208,16 +187,15 @@ describe('PreEnforceInterceptor', () => {
       handleAllOnNextConstraints: jest.fn(() => ({ replaced: true })),
     } as any);
     (constraintService.preEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
-    const next = createMockCallHandler({ data: 'original' });
+    const method = jest.fn().mockResolvedValue({ data: 'original' });
 
-    const result$ = await interceptor.intercept(createMockExecutionContext(), next);
-    const result = await lastValueFrom(result$);
+    const wrapped = wrapMethod(method);
+    const result = await wrapped();
 
     expect(result).toEqual({ replaced: true });
   });
 
   test('whenOnNextConstraintThrowsThenErrorHandlersRun', async () => {
-    jest.spyOn(reflector, 'get').mockReturnValue({});
     (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
     const mappedError = new Error('mapped');
     const bundle = createMockBundle({
@@ -225,47 +203,45 @@ describe('PreEnforceInterceptor', () => {
       handleAllOnErrorConstraints: jest.fn(() => mappedError),
     } as any);
     (constraintService.preEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
-    const next = createMockCallHandler({ data: 'test' });
+    const method = jest.fn().mockResolvedValue({ data: 'test' });
 
-    const result$ = await interceptor.intercept(createMockExecutionContext(), next);
-    await expect(lastValueFrom(result$)).rejects.toBe(mappedError);
+    const wrapped = wrapMethod(method);
+    await expect(wrapped()).rejects.toBe(mappedError);
     expect(bundle.handleAllOnErrorConstraints).toHaveBeenCalled();
   });
 
   describe('DENY with obligations', () => {
     test('whenDenyWithObligationsThenBestEffortBundleRunsOnDecisionHandlers', async () => {
-      jest.spyOn(reflector, 'get').mockReturnValue({});
       (pdpService.decideOnce as jest.Mock).mockResolvedValue({
         decision: 'DENY',
         obligations: [{ type: 'auditLog' }],
       });
       const bundle = createMockBundle();
       (constraintService.bestEffortBundleFor as jest.Mock).mockReturnValue(bundle);
-      const next = createMockCallHandler();
+      const method = jest.fn();
 
-      await expect(interceptor.intercept(createMockExecutionContext(), next))
-        .rejects.toThrow(ForbiddenException);
+      const wrapped = wrapMethod(method);
+      await expect(wrapped()).rejects.toThrow(ForbiddenException);
 
       expect(constraintService.bestEffortBundleFor).toHaveBeenCalledWith(
         expect.objectContaining({ decision: 'DENY', obligations: [{ type: 'auditLog' }] }),
       );
       expect(bundle.handleOnDecisionConstraints).toHaveBeenCalled();
-      expect(next.handle).not.toHaveBeenCalled();
+      expect(method).not.toHaveBeenCalled();
     });
 
     test('whenDenyWithObligationsAndOnDenyThenBestEffortRunsThenOnDenyCalled', async () => {
       const onDeny = jest.fn().mockReturnValue({ denied: true });
-      jest.spyOn(reflector, 'get').mockReturnValue({ onDeny });
       (pdpService.decideOnce as jest.Mock).mockResolvedValue({
         decision: 'DENY',
         obligations: [{ type: 'auditLog' }],
       });
       const bundle = createMockBundle();
       (constraintService.bestEffortBundleFor as jest.Mock).mockReturnValue(bundle);
-      const next = createMockCallHandler();
+      const method = jest.fn();
 
-      const result$ = await interceptor.intercept(createMockExecutionContext(), next);
-      const result = await lastValueFrom(result$);
+      const wrapped = wrapMethod(method, { onDeny });
+      const result = await wrapped();
 
       expect(result).toEqual({ denied: true });
       expect(bundle.handleOnDecisionConstraints).toHaveBeenCalled();
@@ -273,7 +249,6 @@ describe('PreEnforceInterceptor', () => {
     });
 
     test('whenDenyWithBestEffortHandlerFailureThenStillDenies', async () => {
-      jest.spyOn(reflector, 'get').mockReturnValue({});
       (pdpService.decideOnce as jest.Mock).mockResolvedValue({
         decision: 'DENY',
         obligations: [{ type: 'failing' }],
@@ -282,15 +257,14 @@ describe('PreEnforceInterceptor', () => {
         handleOnDecisionConstraints: jest.fn(() => { throw new Error('handler failed'); }),
       } as any);
       (constraintService.bestEffortBundleFor as jest.Mock).mockReturnValue(bundle);
-      const next = createMockCallHandler();
+      const method = jest.fn();
 
-      await expect(interceptor.intercept(createMockExecutionContext(), next))
-        .rejects.toThrow(ForbiddenException);
-      expect(next.handle).not.toHaveBeenCalled();
+      const wrapped = wrapMethod(method);
+      await expect(wrapped()).rejects.toThrow(ForbiddenException);
+      expect(method).not.toHaveBeenCalled();
     });
 
     test('whenDenyWithUnhandledObligationThenBestEffortBundleFailsGracefully', async () => {
-      jest.spyOn(reflector, 'get').mockReturnValue({});
       (pdpService.decideOnce as jest.Mock).mockResolvedValue({
         decision: 'DENY',
         obligations: [{ type: 'unknown' }],
@@ -298,11 +272,11 @@ describe('PreEnforceInterceptor', () => {
       (constraintService.bestEffortBundleFor as jest.Mock).mockImplementation(() => {
         throw new Error('should not happen but gracefully handled');
       });
-      const next = createMockCallHandler();
+      const method = jest.fn();
 
-      await expect(interceptor.intercept(createMockExecutionContext(), next))
-        .rejects.toThrow(ForbiddenException);
-      expect(next.handle).not.toHaveBeenCalled();
+      const wrapped = wrapMethod(method);
+      await expect(wrapped()).rejects.toThrow(ForbiddenException);
+      expect(method).not.toHaveBeenCalled();
     });
   });
 });

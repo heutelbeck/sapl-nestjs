@@ -22,4 +22,6 @@ export interface SubscriptionContext {
   controller: string;
   /** Handler return value (only populated in @PostEnforce context) */
   returnValue?: any;
+  /** Method arguments (available for service methods outside HTTP context) */
+  args?: any[];
 }

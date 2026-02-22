@@ -1,4 +1,3 @@
-import { ExecutionContext } from '@nestjs/common';
 import { SubscriptionContext } from './SubscriptionContext';
 import { EnforceOptions, SubscriptionField } from './EnforceOptions';
 
@@ -8,21 +7,6 @@ import { EnforceOptions, SubscriptionField } from './EnforceOptions';
  */
 function resolve(field: SubscriptionField | undefined, ctx: SubscriptionContext): any {
   return typeof field === 'function' ? field(ctx) : field;
-}
-
-/**
- * Build the SubscriptionContext from a NestJS ExecutionContext.
- */
-export function buildContext(executionContext: ExecutionContext): SubscriptionContext {
-  const request = executionContext.switchToHttp().getRequest();
-  return {
-    request,
-    params: request.params ?? {},
-    query: request.query ?? {},
-    body: request.body,
-    handler: executionContext.getHandler().name,
-    controller: executionContext.getClass().name,
-  };
 }
 
 /**

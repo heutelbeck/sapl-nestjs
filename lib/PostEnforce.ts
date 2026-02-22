@@ -1,20 +1,20 @@
-import { SetMetadata } from '@nestjs/common';
+import { createDecorator } from '@toss/nestjs-aop';
 import { EnforceOptions } from './EnforceOptions';
 
-export const POST_ENFORCE_KEY = 'sapl:post-enforce';
+export const POST_ENFORCE_SYMBOL = Symbol('sapl:post-enforce');
 
 /**
- * Metadata decorator that marks a route handler for SAPL post-enforcement.
+ * Decorator that marks a method for SAPL post-enforcement.
  *
- * This decorator only stores configuration metadata on the handler. The actual
- * authorization check is performed by PostEnforceInterceptor, which reads this
- * metadata, lets the handler execute first, then builds an authorization
- * subscription (including the handler's return value), calls the PDP, and
- * either returns the result or denies access.
+ * Works on any injectable class method (controllers, services, etc.) via
+ * AOP aspects. The actual authorization check is performed by
+ * PostEnforceAspect, which lets the method execute first, then builds an
+ * authorization subscription (including the method's return value), calls
+ * the PDP, and either returns the result or denies access.
  *
- * Important: The handler executes before authorization is checked. Any side
+ * Important: The method executes before authorization is checked. Any side
  * effects (database writes, emails, etc.) will occur regardless of the decision.
- * Use @PreEnforce for handlers with side effects that should not execute when
+ * Use @PreEnforce for methods with side effects that should not execute when
  * access is denied.
  *
  * Example:
@@ -23,4 +23,4 @@ export const POST_ENFORCE_KEY = 'sapl:post-enforce';
  *   async getPatient(@Param('id') id: string) { ... }
  */
 export const PostEnforce = (options: EnforceOptions = {}) =>
-  SetMetadata(POST_ENFORCE_KEY, options);
+  createDecorator(POST_ENFORCE_SYMBOL, options);

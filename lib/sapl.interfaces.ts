@@ -1,4 +1,5 @@
 import { ModuleMetadata } from '@nestjs/common';
+import { ClsModuleOptions } from 'nestjs-cls';
 
 export interface SaplModuleOptions {
   /** Base URL of the SAPL PDP server (e.g., 'http://localhost:8443') */
@@ -7,6 +8,8 @@ export interface SaplModuleOptions {
   token?: string;
   /** Timeout in milliseconds for PDP HTTP requests (default: 5000) */
   timeout?: number;
+  /** Options merged into ClsModule.forRoot(). Default: { global: true, middleware: { mount: true } } */
+  cls?: Partial<ClsModuleOptions>;
 }
 
 export interface SaplOptionsFactory {
