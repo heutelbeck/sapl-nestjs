@@ -1,8 +1,10 @@
+export const NO_RESOURCE_REPLACEMENT = Symbol('NO_RESOURCE_REPLACEMENT');
+
 export class ConstraintHandlerBundle {
   constructor(
     private readonly onDecisionHandlers: () => void,
     private readonly methodInvocationHandlers: (request: any) => void,
-    private readonly replaceResource: any | null,
+    private readonly replaceResource: any,
     private readonly filterPredicateHandler: (element: any) => boolean,
     private readonly doOnNextHandler: (value: any) => void,
     private readonly mapNextHandler: (value: any) => any,
@@ -19,7 +21,7 @@ export class ConstraintHandlerBundle {
   }
 
   handleAllOnNextConstraints(value: any): any {
-    let current = this.replaceResource !== null ? this.replaceResource : value;
+    let current = this.replaceResource !== NO_RESOURCE_REPLACEMENT ? this.replaceResource : value;
 
     if (Array.isArray(current)) {
       current = current.filter(this.filterPredicateHandler);

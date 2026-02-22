@@ -33,7 +33,8 @@ export class PostEnforceInterceptor implements NestInterceptor {
         ctx.returnValue = handlerResult;
 
         const subscription = buildSubscriptionFromContext(options, ctx);
-        this.logger.debug(`Subscription: ${JSON.stringify(subscription)}`);
+        const { secrets, ...safeForLog } = subscription;
+        this.logger.debug(`Subscription: ${JSON.stringify(safeForLog)}`);
 
         const decision = await this.pdpService.decideOnce(subscription);
         this.logger.debug(`Decision: ${JSON.stringify(decision)}`);
@@ -76,7 +77,11 @@ export class PostEnforceInterceptor implements NestInterceptor {
     options: EnforceOptions,
     ctx: any,
   ): any {
-    this.logger.warn(`Access denied: ${decision.decision}`);
+    if (decision.decision === 'INDETERMINATE') {
+      this.logger.error(`PDP returned INDETERMINATE -- PDP may be unreachable or misconfigured`);
+    } else {
+      this.logger.warn(`Access denied: ${decision.decision}`);
+    }
 
     try {
       const bundle = this.constraintService.bestEffortBundleFor(decision);
@@ -89,7 +94,7 @@ export class PostEnforceInterceptor implements NestInterceptor {
   }
 
   private deny(options: EnforceOptions, ctx: any, decision: any): any {
-    if (options.onDeny && ctx) {
+    if (options.onDeny) {
       return options.onDeny(ctx, decision);
     }
     throw new ForbiddenException('Access denied by policy');

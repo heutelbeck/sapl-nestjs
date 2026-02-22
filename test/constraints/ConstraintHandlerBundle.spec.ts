@@ -1,4 +1,4 @@
-import { ConstraintHandlerBundle } from '../../lib/constraints/ConstraintHandlerBundle';
+import { ConstraintHandlerBundle, NO_RESOURCE_REPLACEMENT } from '../../lib/constraints/ConstraintHandlerBundle';
 import { SubscriptionContext } from '../../lib/SubscriptionContext';
 import { createCtx } from '../test-helpers';
 
@@ -23,7 +23,7 @@ function createBundle(overrides: Partial<{
   return new ConstraintHandlerBundle(
     overrides.onDecision ?? noop,
     overrides.methodInvocation ?? noopCtx,
-    overrides.replaceResource ?? null,
+    overrides.replaceResource ?? NO_RESOURCE_REPLACEMENT,
     overrides.filterPredicate ?? alwaysTrue,
     overrides.doOnNext ?? noopConsumer,
     overrides.mapNext ?? identity,

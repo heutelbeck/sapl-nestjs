@@ -1,3 +1,6 @@
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const safe = require('safe-regex2') as (pattern: string | RegExp) => boolean;
+
 const BLACK_SQUARE = '\u2588';
 
 function getByPath(obj: any, segments: string[]): any {
@@ -31,6 +34,8 @@ function deleteByPath(obj: any, segments: string[]): void {
   }
 }
 
+const DANGEROUS_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
+
 function validatePath(path: string): void {
   if (path.includes('..')) {
     throw new Error(
@@ -49,13 +54,25 @@ function validatePath(path: string): void {
   }
 }
 
+function validateSegments(segments: string[], path: string): void {
+  for (const segment of segments) {
+    if (DANGEROUS_SEGMENTS.has(segment)) {
+      throw new Error(
+        `Unsafe path segment '${segment}' in '${path}'. Prototype-polluting paths are rejected.`,
+      );
+    }
+  }
+}
+
 function parsePath(path: string): string[] {
   validatePath(path);
   let normalized = path;
   if (normalized.startsWith('$.')) {
     normalized = normalized.substring(2);
   }
-  return normalized.split('.');
+  const segments = normalized.split('.');
+  validateSegments(segments, path);
+  return segments;
 }
 
 function blacken(
@@ -155,8 +172,13 @@ function evaluateCondition(element: any, condition: any): boolean {
       return actual > expected;
     case '<':
       return actual < expected;
-    case '=~':
-      return typeof actual === 'string' && new RegExp(String(expected)).test(actual);
+    case '=~': {
+      const pattern = String(expected);
+      if (!safe(pattern)) {
+        throw new Error(`Unsafe regex pattern rejected (potential ReDoS): '${pattern}'.`);
+      }
+      return typeof actual === 'string' && new RegExp(pattern).test(actual);
+    }
     default:
       throw new Error(`Not a valid predicate condition type: '${operator}'.`);
   }

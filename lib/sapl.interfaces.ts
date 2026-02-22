@@ -5,6 +5,8 @@ export interface SaplModuleOptions {
   baseUrl: string;
   /** Bearer token for PDP REST API authentication (optional for noauth mode) */
   token?: string;
+  /** Timeout in milliseconds for PDP HTTP requests (default: 5000) */
+  timeout?: number;
 }
 
 export interface SaplOptionsFactory {

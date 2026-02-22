@@ -1,7 +1,7 @@
 import { ForbiddenException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { DiscoveryService } from '@nestjs/core';
 import { SaplConstraintHandler, ConstraintHandlerType } from './SaplConstraintHandler';
-import { ConstraintHandlerBundle } from './ConstraintHandlerBundle';
+import { ConstraintHandlerBundle, NO_RESOURCE_REPLACEMENT } from './ConstraintHandlerBundle';
 import {
   Signal,
   Responsible,
@@ -183,7 +183,7 @@ export class ConstraintEnforcementService implements OnModuleInit {
     let doOnError: (error: Error) => void = () => {};
     let mapError: (error: Error) => Error = (e) => e;
 
-    const replaceResource = decision.resource !== undefined ? decision.resource : null;
+    const replaceResource = decision.resource !== undefined ? decision.resource : NO_RESOURCE_REPLACEMENT;
 
     const obligationIsStrict = !bestEffort;
 

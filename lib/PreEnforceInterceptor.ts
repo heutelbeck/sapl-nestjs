@@ -1,10 +1,10 @@
 import { CallHandler, ExecutionContext, ForbiddenException, Injectable, Logger, NestInterceptor } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { Observable, of, map, catchError } from 'rxjs';
+import { Observable, of, from, map, catchError } from 'rxjs';
 import { PRE_ENFORCE_KEY } from './PreEnforce';
 import { EnforceOptions } from './EnforceOptions';
 import { PdpService } from './pdp.service';
-import { buildSubscription, buildContext } from './SubscriptionBuilder';
+import { buildContext, buildSubscriptionFromContext } from './SubscriptionBuilder';
 import { ConstraintEnforcementService } from './constraints/ConstraintEnforcementService';
 
 @Injectable()
@@ -29,8 +29,9 @@ export class PreEnforceInterceptor implements NestInterceptor {
 
     const ctx = buildContext(context);
     const request = context.switchToHttp().getRequest();
-    const subscription = buildSubscription(options, context);
-    this.logger.debug(`Subscription: ${JSON.stringify(subscription)}`);
+    const subscription = buildSubscriptionFromContext(options, ctx);
+    const { secrets, ...safeForLog } = subscription;
+    this.logger.debug(`Subscription: ${JSON.stringify(safeForLog)}`);
 
     const decision = await this.pdpService.decideOnce(subscription);
     this.logger.debug(`Decision: ${JSON.stringify(decision)}`);
@@ -79,7 +80,11 @@ export class PreEnforceInterceptor implements NestInterceptor {
     options: EnforceOptions,
     ctx: any,
   ): Observable<any> {
-    this.logger.warn(`Access denied: ${decision.decision}`);
+    if (decision.decision === 'INDETERMINATE') {
+      this.logger.error(`PDP returned INDETERMINATE -- PDP may be unreachable or misconfigured`);
+    } else {
+      this.logger.warn(`Access denied: ${decision.decision}`);
+    }
 
     try {
       const bundle = this.constraintService.bestEffortBundleFor(decision);
@@ -92,8 +97,9 @@ export class PreEnforceInterceptor implements NestInterceptor {
   }
 
   private deny(options: EnforceOptions, ctx: any, decision: any): Observable<any> {
-    if (options.onDeny && ctx) {
-      return of(options.onDeny(ctx, decision));
+    if (options.onDeny) {
+      const result = options.onDeny(ctx, decision);
+      return result instanceof Promise ? from(result) : of(result);
     }
     throw new ForbiddenException('Access denied by policy');
   }

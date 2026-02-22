@@ -428,7 +428,7 @@ describe('ConstraintEnforcementService', () => {
         .toEqual({ original: true });
     });
 
-    test('whenDecisionResourceIsExplicitNullThenTreatedAsNoReplacement', async () => {
+    test('whenDecisionResourceIsExplicitNullThenReplacesValueWithNull', async () => {
       const { service } = await createService();
 
       const bundle = service.preEnforceBundleFor({
@@ -437,7 +437,7 @@ describe('ConstraintEnforcementService', () => {
       });
 
       expect(bundle.handleAllOnNextConstraints({ original: true }))
-        .toEqual({ original: true });
+        .toBeNull();
     });
   });
 

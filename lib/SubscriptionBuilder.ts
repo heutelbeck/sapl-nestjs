@@ -55,55 +55,25 @@ function defaultResource(ctx: SubscriptionContext): any {
 }
 
 /**
- * Build the default environment: harvest available request metadata.
- * Only includes values already present on the request -- never generates
- * synthetic values like timestamps or request IDs.
+ * Build the default environment: server-side request metadata only.
+ * Client-controlled headers (Date, X-Forwarded-For, X-Request-Id,
+ * X-Correlation-Id) are deliberately excluded because they can be forged.
+ * Use the environment callback in EnforceOptions to include them explicitly
+ * if needed.
  */
 function defaultEnvironment(ctx: SubscriptionContext): any {
-  const env: Record<string, any> = {
+  return {
     ip: ctx.request.ip,
     hostname: ctx.request.hostname,
   };
-
-  const headers = ctx.request.headers;
-  if (headers['date'])               env.timestamp = headers['date'];
-  if (headers['x-request-id'])       env.requestId = headers['x-request-id'];
-  if (headers['x-correlation-id'])   env.correlationId = headers['x-correlation-id'];
-  if (headers['x-forwarded-for'])    env.forwardedFor = headers['x-forwarded-for'];
-
-  return env;
 }
 
 /**
  * Build a complete SAPL authorization subscription from EnforceOptions and
- * the current NestJS ExecutionContext.
+ * a pre-built SubscriptionContext.
  *
  * For each field: if the user provided a value (literal or callback), use it.
  * Otherwise apply the sensible default.
- */
-export function buildSubscription(
-  options: EnforceOptions,
-  executionContext: ExecutionContext,
-): Record<string, any> {
-  const ctx = buildContext(executionContext);
-
-  const subject     = options.subject     !== undefined ? resolve(options.subject, ctx)     : defaultSubject(ctx);
-  const action      = options.action      !== undefined ? resolve(options.action, ctx)      : defaultAction(ctx);
-  const resource    = options.resource    !== undefined ? resolve(options.resource, ctx)    : defaultResource(ctx);
-  const environment = options.environment !== undefined ? resolve(options.environment, ctx) : defaultEnvironment(ctx);
-  const secrets     = options.secrets     !== undefined ? resolve(options.secrets, ctx)     : undefined;
-
-  const subscription: Record<string, any> = { subject, action, resource, environment };
-  if (secrets !== undefined) {
-    subscription.secrets = secrets;
-  }
-  return subscription;
-}
-
-/**
- * Build a complete SAPL authorization subscription from EnforceOptions and
- * a pre-built SubscriptionContext. Used by PostEnforceInterceptor where the
- * context includes returnValue set after handler execution.
  */
 export function buildSubscriptionFromContext(
   options: EnforceOptions,
