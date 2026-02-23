@@ -215,15 +215,52 @@ describe('PreEnforceAspect', () => {
     expect(result).toEqual({ replaced: true });
   });
 
-  test('whenOnNextConstraintThrowsThenErrorHandlersRun', async () => {
+  test('whenAsyncOnNextConstraintThrowsThenDenied', async () => {
     (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
-    const mappedError = new Error('mapped');
     const bundle = createMockBundle({
       handleAllOnNextConstraints: jest.fn(() => { throw new Error('onNext failed'); }),
-      handleAllOnErrorConstraints: jest.fn(() => mappedError),
     } as any);
     (constraintService.preEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
     const method = jest.fn().mockResolvedValue({ data: 'test' });
+
+    const wrapped = wrapMethod(method);
+    await expect(wrapped()).rejects.toThrow(ForbiddenException);
+  });
+
+  test('whenSyncOnNextConstraintThrowsThenDenied', async () => {
+    (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
+    const bundle = createMockBundle({
+      handleAllOnNextConstraints: jest.fn(() => { throw new Error('onNext failed'); }),
+    } as any);
+    (constraintService.preEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
+    const method = jest.fn().mockReturnValue({ data: 'test' });
+
+    const wrapped = wrapMethod(method);
+    await expect(wrapped()).rejects.toThrow(ForbiddenException);
+  });
+
+  test('whenSyncMethodThrowsThenErrorHandlersRunAndMappedErrorPropagates', async () => {
+    (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
+    const mappedError = new Error('mapped');
+    const bundle = createMockBundle({
+      handleAllOnErrorConstraints: jest.fn(() => mappedError),
+    } as any);
+    (constraintService.preEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
+    const method = jest.fn().mockImplementation(() => { throw new Error('method failed'); });
+
+    const wrapped = wrapMethod(method);
+    await expect(wrapped()).rejects.toBe(mappedError);
+    expect(bundle.handleAllOnErrorConstraints).toHaveBeenCalled();
+  });
+
+  test('whenAsyncMethodRejectsThenErrorHandlersRunAndMappedErrorPropagates', async () => {
+    (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
+    const mappedError = new Error('mapped');
+    const bundle = createMockBundle({
+      handleAllOnErrorConstraints: jest.fn(() => mappedError),
+    } as any);
+    (constraintService.preEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
+    const method = jest.fn().mockRejectedValue(new Error('method failed'));
 
     const wrapped = wrapMethod(method);
     await expect(wrapped()).rejects.toBe(mappedError);

@@ -57,29 +57,54 @@ export class PreEnforceAspect implements LazyDecorator<any, EnforceOptions> {
       return this.deny(options, ctx, decision);
     }
 
+    // Phase 1: pre-method obligation handlers -- failure denies access
+    const invocationContext: MethodInvocationContext = {
+      request: ctx.request,
+      args,
+      methodName,
+      className,
+    };
     try {
       bundle.handleOnDecisionConstraints();
-
-      const invocationContext: MethodInvocationContext = {
-        request: ctx.request,
-        args,
-        methodName,
-        className,
-      };
       bundle.handleMethodInvocationHandlers(invocationContext);
-
-      const result = method(...invocationContext.args);
-
-      if (result instanceof Promise) {
-        return result
-          .then((value) => bundle.handleAllOnNextConstraints(value))
-          .catch((error) => { throw bundle.handleAllOnErrorConstraints(error instanceof Error ? error : new Error(String(error))); });
-      }
-
-      return bundle.handleAllOnNextConstraints(result);
     } catch (error) {
-      try { bundle.handleAllOnErrorConstraints(error instanceof Error ? error : new Error(String(error))); } catch { /* already denying */ }
       this.logger.warn(`Obligation handling failed on PERMIT: ${error}`);
+      return this.deny(options, ctx, decision);
+    }
+
+    // Phase 2: method execution -- errors propagate after error handler mapping
+    let result;
+    try {
+      result = method(...invocationContext.args);
+    } catch (methodError) {
+      throw bundle.handleAllOnErrorConstraints(
+        methodError instanceof Error ? methodError : new Error(String(methodError)),
+      );
+    }
+
+    // Phase 3: post-method obligation handlers -- failure denies access
+    if (result instanceof Promise) {
+      return result.then(
+        (value) => {
+          try {
+            return bundle.handleAllOnNextConstraints(value);
+          } catch (obligationError) {
+            this.logger.warn(`Obligation handling failed on PERMIT: ${obligationError}`);
+            return this.deny(options, ctx, decision);
+          }
+        },
+        (methodError) => {
+          throw bundle.handleAllOnErrorConstraints(
+            methodError instanceof Error ? methodError : new Error(String(methodError)),
+          );
+        },
+      );
+    }
+
+    try {
+      return bundle.handleAllOnNextConstraints(result);
+    } catch (obligationError) {
+      this.logger.warn(`Obligation handling failed on PERMIT: ${obligationError}`);
       return this.deny(options, ctx, decision);
     }
   }
