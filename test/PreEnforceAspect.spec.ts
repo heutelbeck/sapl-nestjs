@@ -139,22 +139,25 @@ describe('PreEnforceAspect', () => {
     expect(method).not.toHaveBeenCalled();
   });
 
-  test('whenMethodInvocationHandlerThenReceivesRequestObject', async () => {
+  test('whenMethodInvocationHandlerThenReceivesMethodInvocationContext', async () => {
     (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
     const bundle = createMockBundle();
     (constraintService.preEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
     const method = jest.fn().mockResolvedValue({ data: 'test' });
 
     const wrapped = wrapMethod(method);
-    await wrapped();
+    await wrapped('arg1', 'arg2');
 
     expect(bundle.handleMethodInvocationHandlers).toHaveBeenCalledWith(
       expect.objectContaining({
-        user: expect.anything(),
-        method: 'GET',
-        params: expect.any(Object),
-        body: undefined,
-        headers: expect.any(Object),
+        request: expect.objectContaining({
+          user: expect.anything(),
+          method: 'GET',
+          params: expect.any(Object),
+        }),
+        args: ['arg1', 'arg2'],
+        methodName: 'testHandler',
+        className: 'TestController',
       }),
     );
   });
@@ -163,9 +166,9 @@ describe('PreEnforceAspect', () => {
     (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
 
     const bundle = createMockBundle({
-      handleMethodInvocationHandlers: jest.fn((request) => {
-        request.body = { injected: true };
-        request.params.id = 'forced-id';
+      handleMethodInvocationHandlers: jest.fn((context) => {
+        context.request.body = { injected: true };
+        context.request.params.id = 'forced-id';
       }),
     } as any);
     (constraintService.preEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
@@ -176,6 +179,23 @@ describe('PreEnforceAspect', () => {
 
     expect(clsMock.request.body).toEqual({ injected: true });
     expect(clsMock.request.params.id).toBe('forced-id');
+  });
+
+  test('whenMethodInvocationHandlerMutatesArgsThenMethodReceivesModifiedArgs', async () => {
+    (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
+
+    const bundle = createMockBundle({
+      handleMethodInvocationHandlers: jest.fn((context) => {
+        context.args[0] = 'sanitized';
+      }),
+    } as any);
+    (constraintService.preEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
+    const method = jest.fn().mockResolvedValue({ data: 'test' });
+
+    const wrapped = wrapMethod(method);
+    await wrapped('raw-input', 'other');
+
+    expect(method).toHaveBeenCalledWith('sanitized', 'other');
   });
 
   test('whenPermitWithResourceReplacementThenResponseReplaced', async () => {

@@ -14,6 +14,7 @@ import {
   FilterPredicateConstraintHandlerProvider,
   MethodInvocationConstraintHandlerProvider,
 } from '../../lib/constraints/api/index';
+import { MethodInvocationContext } from '../../lib/MethodInvocationContext';
 import { ContentFilteringProvider } from '../../lib/constraints/providers/ContentFilteringProvider';
 import { ContentFilterPredicateProvider } from '../../lib/constraints/providers/ContentFilterPredicateProvider';
 
@@ -80,7 +81,7 @@ class StatusFilterProvider implements FilterPredicateConstraintHandlerProvider {
 class InjectHeaderProvider implements MethodInvocationConstraintHandlerProvider {
   isResponsible(constraint: any) { return constraint?.type === 'injectHeader'; }
   getHandler(constraint: any) {
-    return (request: any) => { request.headers[constraint.headerName] = constraint.value; };
+    return (context: MethodInvocationContext) => { context.request.headers[constraint.headerName] = constraint.value; };
   }
 }
 
@@ -268,7 +269,7 @@ describe('ConstraintEnforcementService', () => {
         constraint: { type: 'injectHeader', headerName: 'x-audit', value: 'injected' },
         verify: (bundle: any) => {
           const request = { headers: {}, params: {}, body: {} };
-          bundle.handleMethodInvocationHandlers(request);
+          bundle.handleMethodInvocationHandlers({ request, args: [], methodName: 'test', className: 'Test' });
           expect(request.headers['x-audit']).toBe('injected');
         },
       },
@@ -393,7 +394,7 @@ describe('ConstraintEnforcementService', () => {
       });
 
       const request = { headers: {}, params: {}, body: {} } as any;
-      bundle.handleMethodInvocationHandlers(request);
+      bundle.handleMethodInvocationHandlers({ request, args: [], methodName: 'test', className: 'Test' });
       expect(request.headers['x-audit']).toBeUndefined();
     });
 

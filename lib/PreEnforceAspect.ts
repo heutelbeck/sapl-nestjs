@@ -3,6 +3,7 @@ import { Aspect, LazyDecorator, WrapParams } from '@toss/nestjs-aop';
 import { ClsService, CLS_REQ } from 'nestjs-cls';
 import { PRE_ENFORCE_SYMBOL } from './PreEnforce';
 import { EnforceOptions } from './EnforceOptions';
+import { MethodInvocationContext } from './MethodInvocationContext';
 import { PdpService } from './pdp.service';
 import { SubscriptionContext } from './SubscriptionContext';
 import { buildSubscriptionFromContext } from './SubscriptionBuilder';
@@ -32,7 +33,7 @@ export class PreEnforceAspect implements LazyDecorator<any, EnforceOptions> {
       aspect.logger.debug(`Decision: ${JSON.stringify(decision)}`);
 
       if (decision.decision === 'PERMIT') {
-        return aspect.handlePermit(decision, metadata, ctx, method, args);
+        return aspect.handlePermit(decision, metadata, ctx, method, args, methodName, className);
       }
 
       return aspect.handleDeny(decision, metadata, ctx);
@@ -45,6 +46,8 @@ export class PreEnforceAspect implements LazyDecorator<any, EnforceOptions> {
     ctx: SubscriptionContext,
     method: (...args: any[]) => any,
     args: any[],
+    methodName: string,
+    className: string,
   ): any {
     let bundle;
     try {
@@ -56,9 +59,16 @@ export class PreEnforceAspect implements LazyDecorator<any, EnforceOptions> {
 
     try {
       bundle.handleOnDecisionConstraints();
-      bundle.handleMethodInvocationHandlers(ctx.request);
 
-      const result = method(...args);
+      const invocationContext: MethodInvocationContext = {
+        request: ctx.request,
+        args,
+        methodName,
+        className,
+      };
+      bundle.handleMethodInvocationHandlers(invocationContext);
+
+      const result = method(...invocationContext.args);
 
       if (result instanceof Promise) {
         return result

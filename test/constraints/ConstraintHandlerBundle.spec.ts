@@ -1,6 +1,5 @@
 import { ConstraintHandlerBundle, NO_RESOURCE_REPLACEMENT } from '../../lib/constraints/ConstraintHandlerBundle';
-import { SubscriptionContext } from '../../lib/SubscriptionContext';
-import { createCtx } from '../test-helpers';
+import { MethodInvocationContext } from '../../lib/MethodInvocationContext';
 
 function noop() {}
 function noopConsumer(_v: any) {}
@@ -8,11 +7,21 @@ function identity(v: any) { return v; }
 function alwaysTrue(_v: any) { return true; }
 function noopError(_e: Error) {}
 function identityError(e: Error) { return e; }
-function noopCtx(_ctx: SubscriptionContext) {}
+function noopCtx(_ctx: MethodInvocationContext) {}
+
+function createInvocationContext(overrides: Partial<MethodInvocationContext> = {}): MethodInvocationContext {
+  return {
+    request: {},
+    args: [],
+    methodName: 'testMethod',
+    className: 'TestClass',
+    ...overrides,
+  };
+}
 
 function createBundle(overrides: Partial<{
   onDecision: () => void;
-  methodInvocation: (ctx: SubscriptionContext) => void;
+  methodInvocation: (context: MethodInvocationContext) => void;
   replaceResource: any | null;
   filterPredicate: (element: any) => boolean;
   doOnNext: (value: any) => void;
@@ -53,16 +62,21 @@ describe('ConstraintHandlerBundle', () => {
 
   describe('handleMethodInvocationHandlers', () => {
     test('whenCalledThenReceivesContext', () => {
-      const captured: SubscriptionContext[] = [];
+      const captured: MethodInvocationContext[] = [];
       const bundle = createBundle({
         methodInvocation: (ctx) => captured.push(ctx),
       });
-      const ctx = createCtx({ handler: 'myHandler' });
+      const ctx = createInvocationContext({ methodName: 'myMethod', className: 'MyClass' });
 
       bundle.handleMethodInvocationHandlers(ctx);
 
       expect(captured).toHaveLength(1);
-      expect(captured[0].handler).toBe('myHandler');
+      expect(captured[0]).toEqual(expect.objectContaining({
+        methodName: 'myMethod',
+        className: 'MyClass',
+        args: [],
+        request: {},
+      }));
     });
   });
 

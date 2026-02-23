@@ -1,9 +1,11 @@
+import { MethodInvocationContext } from '../MethodInvocationContext';
+
 export const NO_RESOURCE_REPLACEMENT = Symbol('NO_RESOURCE_REPLACEMENT');
 
 export class ConstraintHandlerBundle {
   constructor(
     private readonly onDecisionHandlers: () => void,
-    private readonly methodInvocationHandlers: (request: any) => void,
+    private readonly methodInvocationHandlers: (context: MethodInvocationContext) => void,
     private readonly replaceResource: any,
     private readonly filterPredicateHandler: (element: any) => boolean,
     private readonly doOnNextHandler: (value: any) => void,
@@ -16,8 +18,8 @@ export class ConstraintHandlerBundle {
     this.onDecisionHandlers();
   }
 
-  handleMethodInvocationHandlers(request: any): void {
-    this.methodInvocationHandlers(request);
+  handleMethodInvocationHandlers(context: MethodInvocationContext): void {
+    this.methodInvocationHandlers(context);
   }
 
   handleAllOnNextConstraints(value: any): any {

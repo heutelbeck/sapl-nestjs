@@ -33,6 +33,8 @@ export interface FilterPredicateConstraintHandlerProvider extends Responsible {
   getHandler(constraint: any): (element: any) => boolean;
 }
 
+import { MethodInvocationContext } from '../../MethodInvocationContext';
+
 export interface MethodInvocationConstraintHandlerProvider extends Responsible {
-  getHandler(constraint: any): (request: any) => void;
+  getHandler(constraint: any): (context: MethodInvocationContext) => void;
 }

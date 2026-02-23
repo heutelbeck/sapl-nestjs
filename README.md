@@ -154,15 +154,45 @@ When the PDP returns a decision with `obligations` or `advice`, the `ConstraintE
 
 ### Handler Types
 
-| Type               | Interface                                   | Handler Signature           | When It Runs                        |
-|--------------------|---------------------------------------------|-----------------------------|-------------------------------------|
-| `runnable`         | `RunnableConstraintHandlerProvider`         | `() => void`                | On decision (side effects)          |
-| `methodInvocation` | `MethodInvocationConstraintHandlerProvider` | `(request: any) => void`    | Before handler (`@PreEnforce` only) |
-| `consumer`         | `ConsumerConstraintHandlerProvider`         | `(value: any) => void`      | After handler, inspects response    |
-| `mapping`          | `MappingConstraintHandlerProvider`          | `(value: any) => any`       | After handler, transforms response  |
-| `filterPredicate`  | `FilterPredicateConstraintHandlerProvider`  | `(element: any) => boolean` | After handler, filters elements     |
-| `errorHandler`     | `ErrorHandlerProvider`                      | `(error: Error) => void`    | On error, inspects                  |
-| `errorMapping`     | `ErrorMappingConstraintHandlerProvider`     | `(error: Error) => Error`   | On error, transforms                |
+| Type               | Interface                                   | Handler Signature                            | When It Runs                        |
+|--------------------|---------------------------------------------|----------------------------------------------|-------------------------------------|
+| `runnable`         | `RunnableConstraintHandlerProvider`         | `() => void`                                 | On decision (side effects)          |
+| `methodInvocation` | `MethodInvocationConstraintHandlerProvider` | `(context: MethodInvocationContext) => void`  | Before method (`@PreEnforce` only)  |
+| `consumer`         | `ConsumerConstraintHandlerProvider`         | `(value: any) => void`                       | After method, inspects response     |
+| `mapping`          | `MappingConstraintHandlerProvider`          | `(value: any) => any`                        | After method, transforms response   |
+| `filterPredicate`  | `FilterPredicateConstraintHandlerProvider`  | `(element: any) => boolean`                  | After method, filters elements      |
+| `errorHandler`     | `ErrorHandlerProvider`                      | `(error: Error) => void`                     | On error, inspects                  |
+| `errorMapping`     | `ErrorMappingConstraintHandlerProvider`     | `(error: Error) => Error`                    | On error, transforms                |
+
+The `MethodInvocationContext` provides:
+
+| Field        | Type     | Description                                                    |
+|--------------|----------|----------------------------------------------------------------|
+| `request`    | `any`    | The HTTP request object (from CLS)                             |
+| `args`       | `any[]`  | The method arguments -- handlers can mutate or replace entries  |
+| `methodName` | `string` | The intercepted method name                                    |
+| `className`  | `string` | The class containing the intercepted method                    |
+
+Handlers can modify `context.args` to change what arguments the method receives. This enables patterns like policy-driven transfer limits:
+
+```typescript
+@Injectable()
+@SaplConstraintHandler('methodInvocation')
+export class CapTransferHandler implements MethodInvocationConstraintHandlerProvider {
+  isResponsible(constraint: any) { return constraint?.type === 'capTransferAmount'; }
+
+  getHandler(constraint: any): (context: MethodInvocationContext) => void {
+    const maxAmount = constraint.maxAmount;
+    const argIndex = constraint.argIndex ?? 0;
+    return (context) => {
+      const requested = Number(context.args[argIndex]);
+      if (requested > maxAmount) {
+        context.args[argIndex] = maxAmount;
+      }
+    };
+  }
+}
+```
 
 ### Registering Custom Handlers
 

@@ -21,6 +21,7 @@ export {
   OnDenyHandler,
 } from './EnforceOptions';
 export { SubscriptionContext } from './SubscriptionContext';
+export { MethodInvocationContext } from './MethodInvocationContext';
 
 // Constraint handler API
 export {

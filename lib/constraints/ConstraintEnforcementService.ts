@@ -1,5 +1,6 @@
 import { ForbiddenException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { DiscoveryService } from '@nestjs/core';
+import { MethodInvocationContext } from '../MethodInvocationContext';
 import { SaplConstraintHandler, ConstraintHandlerType } from './SaplConstraintHandler';
 import { ConstraintHandlerBundle, NO_RESOURCE_REPLACEMENT } from './ConstraintHandlerBundle';
 import {
@@ -176,7 +177,7 @@ export class ConstraintEnforcementService implements OnModuleInit {
     const unhandledObligations = new Set<number>(obligations.map((_, i) => i));
 
     let onDecision: () => void = () => {};
-    let methodInvocation: (request: any) => void = () => {};
+    let methodInvocation: (context: MethodInvocationContext) => void = () => {};
     let filterPredicate: (element: any) => boolean = () => true;
     let doOnNext: (value: any) => void = () => {};
     let mapNext: (value: any) => any = (v) => v;
@@ -301,7 +302,7 @@ export class ConstraintEnforcementService implements OnModuleInit {
     isObligation: boolean,
     unhandled: Set<number> | undefined,
     index: number,
-    compose: (handler: (request: any) => void) => void,
+    compose: (handler: (context: MethodInvocationContext) => void) => void,
   ): void {
     for (const provider of this.handlers.methodInvocation) {
       if (!provider.isResponsible(constraint)) continue;
@@ -411,9 +412,9 @@ export class ConstraintEnforcementService implements OnModuleInit {
   }
 
   private composeMethodInvocation(
-    a: (request: any) => void,
-    b: (request: any) => void,
-  ): (request: any) => void {
-    return (request) => { a(request); b(request); };
+    a: (context: MethodInvocationContext) => void,
+    b: (context: MethodInvocationContext) => void,
+  ): (context: MethodInvocationContext) => void {
+    return (context) => { a(context); b(context); };
   }
 }
