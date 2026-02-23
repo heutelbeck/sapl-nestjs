@@ -4,27 +4,29 @@ Attribute-Based Access Control (ABAC) for NestJS using SAPL (Streaming Attribute
 
 ## What is SAPL?
 
-SAPL is a policy language and Policy Decision Point (PDP) for attribute-based access control. Policies are written in a dedicated language and evaluated by the PDP, which streams authorization decisions based on subject, action, resource, and environment attributes. For the full picture, see the [SAPL documentation](https://sapl.io/docs/latest/).
+SAPL is a policy language and Policy Decision Point (PDP) for attribute-based access control. Policies are written in a dedicated language and evaluated by the PDP, which streams authorization decisions based on subject, action, resource, and environment attributes.
 
 ## How @sapl/nestjs Works
 
-```
-Your NestJS App                          SAPL PDP
-+---------------------------+            +---------------------------+
-| Controller / Service      |            | Policies (*.sapl)         |
-|   @PreEnforce / @Post...  |--- sub --->| subject + action +        |
-|                           |<-- dec --- | resource + environment    |
-| Constraint Handler Bundle |            +---------------------------+
-|   obligations + advice    |
-|   -> execute handlers     |
-+---------------------------+
-```
+![Architecture](https://raw.githubusercontent.com/heutelbeck/sapl-nestjs/main/docs/architecture.svg)
 
 Three core concepts:
 
 1. **Authorization subscription** -- your app sends `{ subject, action, resource, environment }` to the PDP
 2. **PDP decision** -- the PDP evaluates policies and returns `PERMIT` or `DENY`, optionally with obligations, advice, or a replacement resource
 3. **Constraint handlers** -- registered handlers execute the policy's instructions (log, filter, transform, cap values, etc.)
+
+A PDP decision looks like this:
+
+```json
+{
+  "decision": "PERMIT",
+  "obligations": [{ "type": "logAccess", "message": "Patient record accessed" }],
+  "advice": [{ "type": "notifyAdmin" }]
+}
+```
+
+`decision` is always present (`PERMIT`, `DENY`, `INDETERMINATE`, or `NOT_APPLICABLE`). The other fields are optional -- `obligations` and `advice` are arrays of arbitrary JSON objects (by convention with a `type` field for handler dispatch), and `resource` (when present) replaces the controller's return value entirely.
 
 For a deeper introduction to SAPL's subscription model and policy language, see the [SAPL documentation](https://sapl.io/docs/latest/).
 
@@ -47,6 +49,7 @@ import { SaplModule } from '@sapl/nestjs';
     SaplModule.forRoot({
       baseUrl: 'http://localhost:8443',
       token: 'sapl_your_token_here',
+      timeout: 5000, // PDP request timeout in ms (default: 5000)
     }),
   ],
 })
@@ -112,13 +115,19 @@ Use `@PreEnforce` for methods with side effects (database writes, emails) that s
 Authorizes **after** the method executes. The method always runs; its return value is available via `ctx.returnValue` in subscription field callbacks.
 
 ```typescript
-@PostEnforce({
-  action: 'read',
-  resource: (ctx) => ({ type: 'record', data: ctx.returnValue }),
-})
-@Get('record/:id')
-getRecord(@Param('id') id: string) {
-  return { id, value: 'sensitive-data' };
+import { Controller, Get, Param } from '@nestjs/common';
+import { PostEnforce } from '@sapl/nestjs';
+
+@Controller('api')
+export class RecordController {
+  @PostEnforce({
+    action: 'read',
+    resource: (ctx) => ({ type: 'record', data: ctx.returnValue }),
+  })
+  @Get('record/:id')
+  getRecord(@Param('id') id: string) {
+    return { id, value: 'sensitive-data' };
+  }
 }
 ```
 
@@ -149,13 +158,25 @@ The `SubscriptionContext` provides:
 
 | Field         | Default                                                                 |
 |---------------|-------------------------------------------------------------------------|
-| `subject`     | `req.user` (decoded JWT claims from auth guard)                         |
+| `subject`     | `req.user ?? 'anonymous'` (decoded JWT claims, or `'anonymous'` if no auth guard) |
 | `action`      | `{ method, controller, handler }`                                       |
 | `resource`    | `{ path, params }`                                                      |
-| `environment` | `{ ip, hostname }` plus select headers if present                       |
+| `environment` | `{ ip, hostname }`                                                      |
 | `secrets`     | Not sent unless explicitly specified                                    |
 
+The `secrets` field carries sensitive data (tokens, API keys) that the PDP needs for policy evaluation but that must not appear in logs. It is excluded from debug logging automatically. Use it when a policy needs to inspect credentials -- for example, passing a raw JWT so the PDP can read its claims:
+
+```typescript
+@PreEnforce({
+  action: 'exportData',
+  resource: (ctx) => ({ pilotId: ctx.params.pilotId }),
+  secrets: (ctx) => ({ jwt: ctx.request.headers.authorization?.split(' ')[1] }),
+})
+```
+
 ### Custom Deny Handling
+
+Add `onDeny` to any `@PreEnforce` or `@PostEnforce` to return a custom response instead of throwing `ForbiddenException`:
 
 ```typescript
 @PreEnforce({
@@ -203,6 +224,8 @@ When the PDP returns a decision with `obligations` or `advice`, the `ConstraintE
 | `errorMapping`     | `ErrorMappingConstraintHandlerProvider`     | `(error: Error) => Error`                    | On error, transforms                |
 | `subscription`     | `SubscriptionHandlerProvider`              | `(subscription: any) => void`                | On subscribe (streaming only)       |
 | `request`          | `RequestHandlerProvider`                   | `(count: number) => void`                    | On request (streaming only)         |
+
+`MappingConstraintHandlerProvider` and `ErrorMappingConstraintHandlerProvider` also require `getPriority(): number`. When multiple mapping handlers match the same constraint, they execute in descending priority order (higher number runs first).
 
 ### MethodInvocationContext
 
@@ -284,6 +307,16 @@ Transforms response values by deleting, replacing, or blackening fields.
 }
 ```
 
+The `blacken` action supports these options:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `path` | string | (required) | Dot-notation path to a string field |
+| `replacement` | string | `"\u2588"` (block character) | Character used for masking |
+| `discloseLeft` | number | `0` | Characters to leave unmasked from the left |
+| `discloseRight` | number | `0` | Characters to leave unmasked from the right |
+| `length` | number | (masked section length) | Override the length of the masked section |
+
 ### ContentFilterPredicateProvider
 
 **Constraint type:** `jsonContentFilterPredicate`
@@ -307,6 +340,8 @@ The built-in content filter supports **simple dot-notation paths only** (`$.fiel
 
 For SSE endpoints that return `Observable<T>`, three streaming decorators provide continuous authorization where the PDP streams decisions over time. Access may flip between PERMIT and DENY based on time, location, or context changes.
 
+![Streaming Strategies](https://raw.githubusercontent.com/heutelbeck/sapl-nestjs/main/docs/streaming.svg)
+
 ### When to Use Which Strategy
 
 | Scenario                                         | Strategy                      |
@@ -320,7 +355,7 @@ For SSE endpoints that return `Observable<T>`, three streaming decorators provid
 Stream terminates on first non-PERMIT decision. Use for streams where denial is a terminal condition.
 
 ```typescript
-import { Controller, Sse } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Observable, interval, map } from 'rxjs';
 import { EnforceTillDenied } from '@sapl/nestjs';
 
@@ -345,17 +380,20 @@ The `onStreamDeny` callback receives the PDP decision and the RxJS `Subscriber`.
 
 ### @EnforceDropWhileDenied
 
-Silently drops data during DENY periods. Stream stays alive and resumes forwarding on re-PERMIT. No callbacks -- data is simply not forwarded while denied.
+Silently drops data during DENY periods. Stream stays alive and resumes forwarding on re-PERMIT. No deny/recover callbacks -- data is simply not forwarded while denied.
 
 ```typescript
-@EnforceDropWhileDenied({
-  action: 'stream:heartbeat',
-  resource: 'heartbeat',
-})
-heartbeat(): Observable<any> {
-  return interval(2000).pipe(
-    map((i) => ({ data: JSON.stringify({ seq: i }) })),
-  );
+@Injectable()
+export class HeartbeatService {
+  @EnforceDropWhileDenied({
+    action: 'stream:heartbeat',
+    resource: 'heartbeat',
+  })
+  heartbeat(): Observable<any> {
+    return interval(2000).pipe(
+      map((i) => ({ data: JSON.stringify({ seq: i }) })),
+    );
+  }
 }
 ```
 
@@ -364,27 +402,30 @@ heartbeat(): Observable<any> {
 In-band deny/recover signals via subscriber callbacks. Edge-triggered: `onStreamDeny` fires only on PERMIT-to-DENY transition, `onStreamRecover` fires only on DENY-to-PERMIT transition. Repeated same-state decisions do not re-fire callbacks.
 
 ```typescript
-@EnforceRecoverableIfDenied({
-  action: 'stream:heartbeat',
-  resource: 'heartbeat',
-  onStreamDeny: (decision, subscriber) => {
-    subscriber.next({ data: JSON.stringify({ type: 'ACCESS_SUSPENDED' }) });
-  },
-  onStreamRecover: (decision, subscriber) => {
-    subscriber.next({ data: JSON.stringify({ type: 'ACCESS_RESTORED' }) });
-  },
-})
-heartbeat(): Observable<any> {
-  return interval(2000).pipe(
-    map((i) => ({ data: JSON.stringify({ seq: i }) })),
-  );
+@Injectable()
+export class HeartbeatService {
+  @EnforceRecoverableIfDenied({
+    action: 'stream:heartbeat',
+    resource: 'heartbeat',
+    onStreamDeny: (decision, subscriber) => {
+      subscriber.next({ data: JSON.stringify({ type: 'ACCESS_SUSPENDED' }) });
+    },
+    onStreamRecover: (decision, subscriber) => {
+      subscriber.next({ data: JSON.stringify({ type: 'ACCESS_RESTORED' }) });
+    },
+  })
+  heartbeat(): Observable<any> {
+    return interval(2000).pipe(
+      map((i) => ({ data: JSON.stringify({ seq: i }) })),
+    );
+  }
 }
 ```
 
 ### Decision Lifecycle
 
 All three streaming aspects:
-- Subscribe to `PdpService.decide()` which opens an SSE connection to the PDP
+- Subscribe to `PdpService.decide()` which opens a streaming connection to the PDP
 - On each PERMIT decision, build a `StreamingConstraintHandlerBundle` that applies constraint handlers to each data element
 - Hot-swap the constraint handler bundle when a new PERMIT decision arrives with different obligations
 - Run best-effort constraint handlers on DENY decisions
@@ -403,6 +444,7 @@ Runnables can target different lifecycle signals:
 ## Manual PDP Access
 
 ```typescript
+import { Controller, ForbiddenException, Get, Request } from '@nestjs/common';
 import { PdpService } from '@sapl/nestjs';
 
 @Controller('api')
@@ -458,7 +500,7 @@ The `cls` options are merged into the default configuration (`{ global: true, mi
 | All decisions are INDETERMINATE | PDP unreachable | Check `baseUrl` and that PDP is running |
 | 403 despite PERMIT decision | Unhandled obligation | Check handler `isResponsible()` matches the obligation `type` |
 | Handler not firing | Missing registration | Add `@SaplConstraintHandler(type)` + add to module `providers` |
-| `req.user` is undefined | No auth guard | Add `@UseGuards()` or set subject explicitly in EnforceOptions |
+| Subject is `'anonymous'` | No auth guard populating `req.user` | Add `@UseGuards()` or set subject explicitly in EnforceOptions |
 | Content filter throws | Unsupported JSONPath | Only simple dot paths supported (`$.field.nested`) |
 | CLS context missing | Module order | Ensure `SaplModule` is imported before modules that use it |
 

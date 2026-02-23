@@ -20,15 +20,21 @@ export type SubscriptionField<T = any> = T | ((ctx: SubscriptionContext) => T);
 export type OnDenyHandler = (ctx: SubscriptionContext, decision: any) => any;
 
 /**
- * Options for building the SAPL authorization subscription.
- * The first four fields correspond to the four subscription components.
+ * The five SAPL authorization subscription fields.
  * All fields are optional -- sensible defaults are derived at runtime.
  */
-export interface EnforceOptions {
+export interface SubscriptionOptions {
   subject?: SubscriptionField;
   action?: SubscriptionField;
   resource?: SubscriptionField;
   environment?: SubscriptionField;
   secrets?: SubscriptionField;
+}
+
+/**
+ * Options for @PreEnforce and @PostEnforce decorators.
+ * Extends SubscriptionOptions with a deny handler callback.
+ */
+export interface EnforceOptions extends SubscriptionOptions {
   onDeny?: OnDenyHandler;
 }

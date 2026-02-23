@@ -1,5 +1,5 @@
 import { SubscriptionContext } from './SubscriptionContext';
-import { EnforceOptions, SubscriptionField } from './EnforceOptions';
+import { SubscriptionOptions, SubscriptionField } from './EnforceOptions';
 
 /**
  * Resolve a SubscriptionField: if it's a function, call it with the context.
@@ -53,14 +53,14 @@ function defaultEnvironment(ctx: SubscriptionContext): any {
 }
 
 /**
- * Build a complete SAPL authorization subscription from EnforceOptions and
- * a pre-built SubscriptionContext.
+ * Build a complete SAPL authorization subscription from SubscriptionOptions
+ * and a pre-built SubscriptionContext.
  *
  * For each field: if the user provided a value (literal or callback), use it.
  * Otherwise apply the sensible default.
  */
 export function buildSubscriptionFromContext(
-  options: EnforceOptions,
+  options: SubscriptionOptions,
   ctx: SubscriptionContext,
 ): Record<string, any> {
   const subject     = options.subject     !== undefined ? resolve(options.subject, ctx)     : defaultSubject(ctx);

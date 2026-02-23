@@ -1,0 +1,14 @@
+flowchart LR
+    subgraph app["Your NestJS App"]
+        direction TB
+        A["Controller / Service<br/>@PreEnforce / @PostEnforce"]
+        B["Constraint Handler Bundle<br/>obligations + advice<br/>execute handlers"]
+        A --> B
+    end
+
+    subgraph pdp["SAPL PDP"]
+        C["Policies (*.sapl)<br/>subject + action +<br/>resource + environment"]
+    end
+
+    A -- "subscription" --> C
+    C -- "decision" --> B

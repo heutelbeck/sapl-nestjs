@@ -19,6 +19,7 @@ export { EnforceRecoverableIfDenied } from './EnforceRecoverableIfDenied';
 
 // Options and context
 export {
+  SubscriptionOptions,
   EnforceOptions,
   SubscriptionField,
   OnDenyHandler,

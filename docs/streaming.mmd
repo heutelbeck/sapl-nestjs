@@ -1,0 +1,34 @@
+sequenceDiagram
+    participant PDP
+    participant Stream
+
+    rect rgb(220, 245, 220)
+        Note over PDP,Stream: PERMIT phase
+        PDP->>Stream: PERMIT
+        loop Every 2s
+            Stream-->>Stream: data event
+        end
+    end
+
+    rect rgb(255, 220, 220)
+        Note over PDP,Stream: DENY phase
+        PDP->>Stream: DENY
+    end
+
+    alt @EnforceTillDenied
+        Stream-->>Stream: ACCESS_DENIED event
+        Note over Stream: Stream closed permanently
+    else @EnforceDropWhileDenied
+        Note over Stream: Events silently dropped
+        rect rgb(220, 245, 220)
+            PDP->>Stream: PERMIT
+            Note over Stream: Events resume
+        end
+    else @EnforceRecoverableIfDenied
+        Stream-->>Stream: ACCESS_SUSPENDED event
+        rect rgb(220, 245, 220)
+            PDP->>Stream: PERMIT
+            Stream-->>Stream: ACCESS_RESTORED event
+            Note over Stream: Events resume
+        end
+    end
