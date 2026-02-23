@@ -1,5 +1,7 @@
 export enum Signal {
   ON_DECISION = 'ON_DECISION',
+  ON_COMPLETE = 'ON_COMPLETE',
+  ON_CANCEL = 'ON_CANCEL',
 }
 
 export interface Responsible {
@@ -37,4 +39,12 @@ import { MethodInvocationContext } from '../../MethodInvocationContext';
 
 export interface MethodInvocationConstraintHandlerProvider extends Responsible {
   getHandler(constraint: any): (context: MethodInvocationContext) => void;
+}
+
+export interface SubscriptionHandlerProvider extends Responsible {
+  getHandler(constraint: any): (subscription: any) => void;
+}
+
+export interface RequestHandlerProvider extends Responsible {
+  getHandler(constraint: any): (count: number) => void;
 }

@@ -1,0 +1,312 @@
+import { PdpService } from '../lib/pdp.service';
+import { SAPL_MODULE_OPTIONS } from '../lib/sapl.constants';
+
+function createService(overrides: Record<string, any> = {}): PdpService {
+  return new PdpService({
+    baseUrl: 'http://localhost:8443',
+    timeout: 5000,
+    ...overrides,
+  });
+}
+
+function createReadableStream(chunks: string[]): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  let index = 0;
+  return new ReadableStream({
+    pull(controller) {
+      if (index < chunks.length) {
+        controller.enqueue(encoder.encode(chunks[index]));
+        index++;
+      } else {
+        controller.close();
+      }
+    },
+  });
+}
+
+function mockFetchResponse(body: ReadableStream, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: status === 200 ? 'OK' : 'Error',
+    body,
+    text: () => Promise.resolve(''),
+    headers: new Headers(),
+  } as any;
+}
+
+describe('PdpService', () => {
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  describe('decideOnce', () => {
+    test('whenPdpReturnsPermitThenResolvesWithPermitDecision', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ decision: 'PERMIT' }),
+      });
+
+      const service = createService();
+      const result = await service.decideOnce({ subject: 'user', action: 'read', resource: 'data' });
+
+      expect(result).toEqual({ decision: 'PERMIT' });
+    });
+
+    test('whenPdpReturnsNon200ThenResolvesWithIndeterminate', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+        text: () => Promise.resolve('error body'),
+      });
+
+      const service = createService();
+      const result = await service.decideOnce({ subject: 'user', action: 'read', resource: 'data' });
+
+      expect(result).toEqual({ decision: 'INDETERMINATE' });
+    });
+
+    test('whenPdpUnreachableThenResolvesWithIndeterminate', async () => {
+      globalThis.fetch = jest.fn().mockRejectedValue(new Error('Connection refused'));
+
+      const service = createService();
+      const result = await service.decideOnce({ subject: 'user', action: 'read', resource: 'data' });
+
+      expect(result).toEqual({ decision: 'INDETERMINATE' });
+    });
+
+    test('whenTimeoutExceededThenResolvesWithIndeterminate', async () => {
+      globalThis.fetch = jest.fn().mockImplementation(() =>
+        new Promise((_, reject) => setTimeout(() => reject(new Error('aborted')), 100)),
+      );
+
+      const service = createService({ timeout: 50 });
+      const result = await service.decideOnce({ subject: 'user', action: 'read', resource: 'data' });
+
+      expect(result).toEqual({ decision: 'INDETERMINATE' });
+    });
+
+    test('whenResponseBodyMalformedThenResolvesWithIndeterminate', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.reject(new SyntaxError('Unexpected token')),
+      });
+
+      const service = createService();
+      const result = await service.decideOnce({ subject: 'user', action: 'read', resource: 'data' });
+
+      expect(result).toEqual({ decision: 'INDETERMINATE' });
+    });
+  });
+
+  describe('decide', () => {
+    test('whenPdpStreamsMultipleDecisionsThenObservableEmitsAll', (done) => {
+      const stream = createReadableStream([
+        'data: {"decision":"PERMIT"}\n\n',
+        'data: {"decision":"DENY"}\n\n',
+        'data: {"decision":"PERMIT"}\n\n',
+      ]);
+      globalThis.fetch = jest.fn().mockResolvedValue(mockFetchResponse(stream));
+
+      const service = createService();
+      const emissions: any[] = [];
+
+      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        next: (d) => emissions.push(d),
+        complete: () => {
+          expect(emissions).toEqual([
+            { decision: 'PERMIT' },
+            { decision: 'DENY' },
+            { decision: 'PERMIT' },
+          ]);
+          done();
+        },
+        error: done,
+      });
+    });
+
+    test('whenPdpStreamEndsThenObservableCompletes', (done) => {
+      const stream = createReadableStream([
+        'data: {"decision":"PERMIT"}\n\n',
+      ]);
+      globalThis.fetch = jest.fn().mockResolvedValue(mockFetchResponse(stream));
+
+      const service = createService();
+
+      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        next: () => {},
+        complete: () => done(),
+        error: done,
+      });
+    });
+
+    test('whenPdpConnectionFailsThenObservableEmitsIndeterminateAndErrors', (done) => {
+      globalThis.fetch = jest.fn().mockRejectedValue(new Error('Connection refused'));
+
+      const service = createService();
+      const emissions: any[] = [];
+
+      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        next: (d) => emissions.push(d),
+        error: () => {
+          expect(emissions).toEqual([{ decision: 'INDETERMINATE' }]);
+          done();
+        },
+      });
+    });
+
+    test('whenUnsubscribedThenFetchAborted', (done) => {
+      let abortSignal: AbortSignal | undefined;
+      globalThis.fetch = jest.fn().mockImplementation((_url: string, init: any) => {
+        abortSignal = init.signal;
+        return new Promise(() => {});
+      });
+
+      const service = createService();
+      const sub = service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe();
+
+      setTimeout(() => {
+        sub.unsubscribe();
+        expect(abortSignal?.aborted).toBe(true);
+        done();
+      }, 50);
+    });
+
+    test('whenSSEChunkSplitsAcrossDataLinesThenParsesCorrectly', (done) => {
+      const stream = createReadableStream([
+        'data: {"deci',
+        'sion":"PERMIT"}\n\ndata: {"decision":"DENY"}\n\n',
+      ]);
+      globalThis.fetch = jest.fn().mockResolvedValue(mockFetchResponse(stream));
+
+      const service = createService();
+      const emissions: any[] = [];
+
+      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        next: (d) => emissions.push(d),
+        complete: () => {
+          expect(emissions).toEqual([
+            { decision: 'PERMIT' },
+            { decision: 'DENY' },
+          ]);
+          done();
+        },
+        error: done,
+      });
+    });
+
+    test('whenSSEContainsCommentLinesThenIgnored', (done) => {
+      const stream = createReadableStream([
+        ': this is a comment\n',
+        'data: {"decision":"PERMIT"}\n\n',
+      ]);
+      globalThis.fetch = jest.fn().mockResolvedValue(mockFetchResponse(stream));
+
+      const service = createService();
+      const emissions: any[] = [];
+
+      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        next: (d) => emissions.push(d),
+        complete: () => {
+          expect(emissions).toEqual([{ decision: 'PERMIT' }]);
+          done();
+        },
+        error: done,
+      });
+    });
+
+    test('whenSSEContainsEmptyDataThenSkipped', (done) => {
+      const stream = createReadableStream([
+        'data: \n\n',
+        'data: {"decision":"PERMIT"}\n\n',
+      ]);
+      globalThis.fetch = jest.fn().mockResolvedValue(mockFetchResponse(stream));
+
+      const service = createService();
+      const emissions: any[] = [];
+
+      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        next: (d) => emissions.push(d),
+        complete: () => {
+          expect(emissions).toEqual([{ decision: 'PERMIT' }]);
+          done();
+        },
+        error: done,
+      });
+    });
+
+    test('whenPdpReturnsNon200OnStreamThenObservableEmitsIndeterminate', (done) => {
+      const stream = createReadableStream([]);
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+        body: stream,
+        text: () => Promise.resolve('error body'),
+        headers: new Headers(),
+      });
+
+      const service = createService();
+      const emissions: any[] = [];
+
+      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        next: (d) => emissions.push(d),
+        error: () => {
+          expect(emissions).toEqual([{ decision: 'INDETERMINATE' }]);
+          done();
+        },
+      });
+    });
+
+    test('whenTokenConfiguredThenAuthorizationHeaderSent', (done) => {
+      const stream = createReadableStream(['data: {"decision":"PERMIT"}\n\n']);
+      globalThis.fetch = jest.fn().mockResolvedValue(mockFetchResponse(stream));
+
+      const service = createService({ token: 'my-token' });
+
+      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        complete: () => {
+          const [, init] = (globalThis.fetch as jest.Mock).mock.calls[0];
+          expect(init.headers['Authorization']).toBe('Bearer my-token');
+          expect(init.headers['Accept']).toBe('application/x-ndjson');
+          done();
+        },
+        error: done,
+      });
+    });
+
+    test('whenPdpStreamsRepeatedDecisionsThenDuplicatesSuppressed', (done) => {
+      const stream = createReadableStream([
+        'data: {"decision":"PERMIT"}\n\n',
+        'data: {"decision":"PERMIT"}\n\n',
+        'data: {"decision":"DENY"}\n\n',
+        'data: {"decision":"DENY"}\n\n',
+        'data: {"decision":"PERMIT"}\n\n',
+      ]);
+      globalThis.fetch = jest.fn().mockResolvedValue(mockFetchResponse(stream));
+
+      const service = createService();
+      const emissions: any[] = [];
+
+      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        next: (d) => emissions.push(d),
+        complete: () => {
+          expect(emissions).toEqual([
+            { decision: 'PERMIT' },
+            { decision: 'DENY' },
+            { decision: 'PERMIT' },
+          ]);
+          done();
+        },
+        error: done,
+      });
+    });
+  });
+});

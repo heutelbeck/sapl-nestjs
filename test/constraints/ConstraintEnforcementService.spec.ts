@@ -13,6 +13,8 @@ import {
   ErrorMappingConstraintHandlerProvider,
   FilterPredicateConstraintHandlerProvider,
   MethodInvocationConstraintHandlerProvider,
+  SubscriptionHandlerProvider,
+  RequestHandlerProvider,
 } from '../../lib/constraints/api/index';
 import { MethodInvocationContext } from '../../lib/MethodInvocationContext';
 import { ContentFilteringProvider } from '../../lib/constraints/providers/ContentFilteringProvider';
@@ -99,6 +101,40 @@ class FailingMappingProvider implements MappingConstraintHandlerProvider {
   isResponsible(constraint: any) { return constraint?.type === 'failingMapping'; }
   getPriority() { return 0; }
   getHandler(_constraint: any) { return (_v: any) => { throw new Error('mapping failed'); }; }
+}
+
+@Injectable()
+@SaplConstraintHandler('runnable')
+class OnCompleteRunnableProvider implements RunnableConstraintHandlerProvider {
+  calls: any[] = [];
+  isResponsible(constraint: any) { return constraint?.type === 'onCompleteLog'; }
+  getSignal() { return Signal.ON_COMPLETE; }
+  getHandler(constraint: any) { return () => { this.calls.push(constraint); }; }
+}
+
+@Injectable()
+@SaplConstraintHandler('runnable')
+class OnCancelRunnableProvider implements RunnableConstraintHandlerProvider {
+  calls: any[] = [];
+  isResponsible(constraint: any) { return constraint?.type === 'onCancelCleanup'; }
+  getSignal() { return Signal.ON_CANCEL; }
+  getHandler(constraint: any) { return () => { this.calls.push(constraint); }; }
+}
+
+@Injectable()
+@SaplConstraintHandler('subscription')
+class SubscriptionHandlerTestProvider implements SubscriptionHandlerProvider {
+  captured: any[] = [];
+  isResponsible(constraint: any) { return constraint?.type === 'onSubscribe'; }
+  getHandler(_constraint: any) { return (subscription: any) => { this.captured.push(subscription); }; }
+}
+
+@Injectable()
+@SaplConstraintHandler('request')
+class RequestHandlerTestProvider implements RequestHandlerProvider {
+  captured: number[] = [];
+  isResponsible(constraint: any) { return constraint?.type === 'onRequest'; }
+  getHandler(_constraint: any) { return (count: number) => { this.captured.push(count); }; }
 }
 
 // -- Helpers ---------------------------------------------------------------
@@ -600,6 +636,237 @@ describe('ConstraintEnforcementService', () => {
 
       const result = bundle.handleAllOnErrorConstraints(new Error('original'));
       expect(result.message).toBe('enriched: original');
+    });
+  });
+
+  describe('streamingBundleFor', () => {
+    test('whenNoObligationsOrAdviceThenReturnsBundleWithNoOpHandlers', async () => {
+      const { service } = await createService();
+      const bundle = service.streamingBundleFor({ decision: 'PERMIT' });
+
+      expect(bundle.handleAllOnNextConstraints('value')).toBe('value');
+      expect(() => bundle.handleOnDecisionConstraints()).not.toThrow();
+      expect(() => bundle.handleOnCompleteConstraints()).not.toThrow();
+      expect(() => bundle.handleOnCancelConstraints()).not.toThrow();
+    });
+
+    test('whenOnDecisionRunnableObligationThenIncludedInBundle', async () => {
+      const { service, getProvider } = await createService([LogOnDecisionProvider]);
+
+      const bundle = service.streamingBundleFor({
+        decision: 'PERMIT',
+        obligations: [{ type: 'logAccess', source: 'streaming' }],
+      });
+
+      bundle.handleOnDecisionConstraints();
+      expect(getProvider(LogOnDecisionProvider).calls).toEqual([{ type: 'logAccess', source: 'streaming' }]);
+    });
+
+    test('whenOnCompleteRunnableObligationThenIncludedInBundle', async () => {
+      const { service, getProvider } = await createService([OnCompleteRunnableProvider]);
+
+      const bundle = service.streamingBundleFor({
+        decision: 'PERMIT',
+        obligations: [{ type: 'onCompleteLog' }],
+      });
+
+      bundle.handleOnCompleteConstraints();
+      expect(getProvider(OnCompleteRunnableProvider).calls).toEqual([{ type: 'onCompleteLog' }]);
+    });
+
+    test('whenOnCancelRunnableObligationThenIncludedInBundle', async () => {
+      const { service, getProvider } = await createService([OnCancelRunnableProvider]);
+
+      const bundle = service.streamingBundleFor({
+        decision: 'PERMIT',
+        obligations: [{ type: 'onCancelCleanup' }],
+      });
+
+      bundle.handleOnCancelConstraints();
+      expect(getProvider(OnCancelRunnableProvider).calls).toEqual([{ type: 'onCancelCleanup' }]);
+    });
+
+    test('whenSubscriptionHandlerObligationThenIncludedInBundle', async () => {
+      const { service, getProvider } = await createService([SubscriptionHandlerTestProvider]);
+
+      const bundle = service.streamingBundleFor({
+        decision: 'PERMIT',
+        obligations: [{ type: 'onSubscribe' }],
+      });
+
+      bundle.handleOnSubscribeConstraints({ id: 'sub1' });
+      expect(getProvider(SubscriptionHandlerTestProvider).captured).toEqual([{ id: 'sub1' }]);
+    });
+
+    test('whenRequestHandlerObligationThenIncludedInBundle', async () => {
+      const { service, getProvider } = await createService([RequestHandlerTestProvider]);
+
+      const bundle = service.streamingBundleFor({
+        decision: 'PERMIT',
+        obligations: [{ type: 'onRequest' }],
+      });
+
+      bundle.handleOnRequestConstraints(10);
+      expect(getProvider(RequestHandlerTestProvider).captured).toEqual([10]);
+    });
+
+    test('whenMappingObligationThenIncludedInBundle', async () => {
+      const { service } = await createService([LowPriorityMappingProvider]);
+
+      const bundle = service.streamingBundleFor({
+        decision: 'PERMIT',
+        obligations: [{ type: 'addAuditField', user: 'admin' }],
+      });
+
+      const result = bundle.handleAllOnNextConstraints({ data: 'x' });
+      expect(result).toEqual({ data: 'x', auditedBy: 'admin' });
+    });
+
+    test('whenConsumerObligationThenIncludedInBundle', async () => {
+      const { service, getProvider } = await createService([AuditConsumerProvider]);
+
+      const bundle = service.streamingBundleFor({
+        decision: 'PERMIT',
+        obligations: [{ type: 'auditLog' }],
+      });
+
+      bundle.handleAllOnNextConstraints({ data: 'test' });
+      expect(getProvider(AuditConsumerProvider).captured).toEqual([{ data: 'test' }]);
+    });
+
+    test('whenFilterPredicateObligationThenIncludedInBundle', async () => {
+      const { service } = await createService([StatusFilterProvider]);
+
+      const bundle = service.streamingBundleFor({
+        decision: 'PERMIT',
+        obligations: [{ type: 'filterByStatus', requiredStatus: 'active' }],
+      });
+
+      const result = bundle.handleAllOnNextConstraints([
+        { id: 1, status: 'active' },
+        { id: 2, status: 'inactive' },
+      ]);
+      expect(result).toEqual([{ id: 1, status: 'active' }]);
+    });
+
+    test('whenErrorHandlerObligationThenIncludedInBundle', async () => {
+      const { service, getProvider } = await createService([ErrorAuditProvider]);
+
+      const bundle = service.streamingBundleFor({
+        decision: 'PERMIT',
+        obligations: [{ type: 'auditError' }],
+      });
+
+      const error = new Error('test');
+      bundle.handleAllOnErrorConstraints(error);
+      expect(getProvider(ErrorAuditProvider).captured).toEqual([error]);
+    });
+
+    test('whenErrorMappingObligationThenIncludedInBundle', async () => {
+      const { service } = await createService([ErrorEnrichmentProvider]);
+
+      const bundle = service.streamingBundleFor({
+        decision: 'PERMIT',
+        obligations: [{ type: 'enrichError' }],
+      });
+
+      const result = bundle.handleAllOnErrorConstraints(new Error('original'));
+      expect(result.message).toBe('enriched: original');
+    });
+
+    test('whenUnhandledObligationThenThrowsForbiddenException', async () => {
+      const { service } = await createService();
+
+      expect(() => service.streamingBundleFor({
+        decision: 'PERMIT',
+        obligations: [{ type: 'unknownObligation' }],
+      })).toThrow(ForbiddenException);
+    });
+
+    test('whenMethodInvocationObligationThenUnhandledInStreaming', async () => {
+      const { service } = await createService([InjectHeaderProvider]);
+
+      expect(() => service.streamingBundleFor({
+        decision: 'PERMIT',
+        obligations: [{ type: 'injectHeader', headerName: 'x-audit', value: 'injected' }],
+      })).toThrow(ForbiddenException);
+    });
+
+    test('whenAdviceWithAllHandlerTypesThenAllIncluded', async () => {
+      const { service, getProvider } = await createService([
+        LogOnDecisionProvider,
+        OnCompleteRunnableProvider,
+        OnCancelRunnableProvider,
+        SubscriptionHandlerTestProvider,
+        AuditConsumerProvider,
+      ]);
+
+      const bundle = service.streamingBundleFor({
+        decision: 'PERMIT',
+        advice: [
+          { type: 'logAccess' },
+          { type: 'onCompleteLog' },
+          { type: 'onCancelCleanup' },
+          { type: 'onSubscribe' },
+          { type: 'auditLog' },
+        ],
+      });
+
+      bundle.handleOnDecisionConstraints();
+      bundle.handleOnCompleteConstraints();
+      bundle.handleOnCancelConstraints();
+      bundle.handleOnSubscribeConstraints({});
+      bundle.handleAllOnNextConstraints({ data: 'test' });
+
+      expect(getProvider(LogOnDecisionProvider).calls).toHaveLength(1);
+      expect(getProvider(OnCompleteRunnableProvider).calls).toHaveLength(1);
+      expect(getProvider(OnCancelRunnableProvider).calls).toHaveLength(1);
+      expect(getProvider(SubscriptionHandlerTestProvider).captured).toHaveLength(1);
+      expect(getProvider(AuditConsumerProvider).captured).toHaveLength(1);
+    });
+
+    test('whenMixedObligationsAndAdviceThenBothContribute', async () => {
+      const { service, getProvider } = await createService([
+        LogOnDecisionProvider,
+        AuditConsumerProvider,
+      ]);
+
+      const bundle = service.streamingBundleFor({
+        decision: 'PERMIT',
+        obligations: [{ type: 'logAccess' }],
+        advice: [{ type: 'auditLog' }],
+      });
+
+      bundle.handleOnDecisionConstraints();
+      bundle.handleAllOnNextConstraints({ data: 'test' });
+
+      expect(getProvider(LogOnDecisionProvider).calls).toHaveLength(1);
+      expect(getProvider(AuditConsumerProvider).captured).toEqual([{ data: 'test' }]);
+    });
+  });
+
+  describe('streamingBestEffortBundleFor', () => {
+    test('whenUnhandledObligationThenTreatedAsAdvice', async () => {
+      const { service } = await createService();
+
+      const bundle = service.streamingBestEffortBundleFor({
+        decision: 'DENY',
+        obligations: [{ type: 'unknownObligation' }],
+      });
+
+      expect(bundle).toBeDefined();
+      expect(() => bundle.handleOnDecisionConstraints()).not.toThrow();
+    });
+
+    test('whenHandlerFailsThenSwallowed', async () => {
+      const { service } = await createService([FailingRunnableProvider]);
+
+      const bundle = service.streamingBestEffortBundleFor({
+        decision: 'DENY',
+        obligations: [{ type: 'failingRunnable' }],
+      });
+
+      expect(() => bundle.handleOnDecisionConstraints()).not.toThrow();
     });
   });
 });

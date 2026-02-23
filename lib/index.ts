@@ -13,6 +13,9 @@ export { PdpService } from './pdp.service';
 // Decorators
 export { PreEnforce } from './PreEnforce';
 export { PostEnforce } from './PostEnforce';
+export { EnforceTillDenied } from './EnforceTillDenied';
+export { EnforceDropWhileDenied } from './EnforceDropWhileDenied';
+export { EnforceRecoverableIfDenied } from './EnforceRecoverableIfDenied';
 
 // Options and context
 export {
@@ -20,6 +23,13 @@ export {
   SubscriptionField,
   OnDenyHandler,
 } from './EnforceOptions';
+export {
+  EnforceTillDeniedOptions,
+  EnforceDropWhileDeniedOptions,
+  EnforceRecoverableOptions,
+  OnStreamDenyHandler,
+  OnStreamRecoverHandler,
+} from './StreamingEnforceOptions';
 export { SubscriptionContext } from './SubscriptionContext';
 export { MethodInvocationContext } from './MethodInvocationContext';
 
@@ -34,6 +44,8 @@ export {
   ErrorMappingConstraintHandlerProvider,
   FilterPredicateConstraintHandlerProvider,
   MethodInvocationConstraintHandlerProvider,
+  SubscriptionHandlerProvider,
+  RequestHandlerProvider,
 } from './constraints/api/index';
 
 // Constraint handler registration
@@ -45,3 +57,4 @@ export {
 // Constraint handler service
 export { ConstraintEnforcementService } from './constraints/ConstraintEnforcementService';
 export { ConstraintHandlerBundle } from './constraints/ConstraintHandlerBundle';
+export { StreamingConstraintHandlerBundle } from './constraints/StreamingConstraintHandlerBundle';

@@ -2,6 +2,32 @@
 
 Attribute-Based Access Control (ABAC) for NestJS using SAPL (Streaming Attribute Policy Language). Provides decorator-driven policy enforcement with a constraint handler architecture for obligations, advice, and response transformation.
 
+## What is SAPL?
+
+SAPL is a policy language and Policy Decision Point (PDP) for attribute-based access control. Policies are written in a dedicated language and evaluated by the PDP, which streams authorization decisions based on subject, action, resource, and environment attributes. For the full picture, see the [SAPL documentation](https://sapl.io/docs/latest/).
+
+## How @sapl/nestjs Works
+
+```
+Your NestJS App                          SAPL PDP
++---------------------------+            +---------------------------+
+| Controller / Service      |            | Policies (*.sapl)         |
+|   @PreEnforce / @Post...  |--- sub --->| subject + action +        |
+|                           |<-- dec --- | resource + environment    |
+| Constraint Handler Bundle |            +---------------------------+
+|   obligations + advice    |
+|   -> execute handlers     |
++---------------------------+
+```
+
+Three core concepts:
+
+1. **Authorization subscription** -- your app sends `{ subject, action, resource, environment }` to the PDP
+2. **PDP decision** -- the PDP evaluates policies and returns `PERMIT` or `DENY`, optionally with obligations, advice, or a replacement resource
+3. **Constraint handlers** -- registered handlers execute the policy's instructions (log, filter, transform, cap values, etc.)
+
+For a deeper introduction to SAPL's subscription model and policy language, see the [SAPL documentation](https://sapl.io/docs/latest/).
+
 ## Installation
 
 ```bash
@@ -53,11 +79,11 @@ export class AppModule {}
 `SaplModule` registers everything automatically:
 - `PdpService` for PDP communication
 - `ConstraintEnforcementService` for constraint handler discovery and orchestration
-- `PreEnforceAspect` and `PostEnforceAspect` via `@toss/nestjs-aop`
+- `PreEnforceAspect`, `PostEnforceAspect`, and streaming enforcement aspects via `@toss/nestjs-aop`
 - `ClsModule` from `nestjs-cls` for request context propagation
 - Built-in `ContentFilteringProvider` and `ContentFilterPredicateProvider`
 
-The decorators work on any injectable class method -- controllers, services, repositories, etc. Methods without `@PreEnforce()` or `@PostEnforce()` are unaffected.
+The decorators work on any injectable class method -- controllers, services, repositories, etc. Methods without enforcement decorators are unaffected.
 
 ## Decorators
 
@@ -96,7 +122,7 @@ getRecord(@Param('id') id: string) {
 }
 ```
 
-Use `@PostEnforce` when the PDP needs to see the return value for its decision, or when you want to transform the response based on the decision.
+Use `@PostEnforce` when the policy needs to see the actual return value to make its authorization decision (e.g., deny based on the data's classification).
 
 ### Subscription Fields
 
@@ -152,7 +178,19 @@ When the PDP returns a decision with `obligations` or `advice`, the `ConstraintE
 | All handled?      | Required. Unhandled obligations deny access (ForbiddenException). | Optional. Unhandled advice is silently ignored. |
 | Handler failure   | Denies access (ForbiddenException).                               | Logs a warning and continues.                   |
 
-### Handler Types
+### When to Use Which Handler
+
+| You want to...                              | Use this handler type                   |
+|---------------------------------------------|-----------------------------------------|
+| Log or notify on a decision                 | `RunnableConstraintHandlerProvider`     |
+| Record/inspect the response (side-effect)   | `ConsumerConstraintHandlerProvider`     |
+| Transform the response                      | `MappingConstraintHandlerProvider`      |
+| Filter array elements from the response     | `FilterPredicateConstraintHandlerProvider` |
+| Modify request or method arguments          | `MethodInvocationConstraintHandlerProvider` |
+| Log/notify on errors (side-effect)          | `ErrorHandlerProvider`                  |
+| Transform errors                            | `ErrorMappingConstraintHandlerProvider` |
+
+### Handler Types Reference
 
 | Type               | Interface                                   | Handler Signature                            | When It Runs                        |
 |--------------------|---------------------------------------------|----------------------------------------------|-------------------------------------|
@@ -163,6 +201,10 @@ When the PDP returns a decision with `obligations` or `advice`, the `ConstraintE
 | `filterPredicate`  | `FilterPredicateConstraintHandlerProvider`  | `(element: any) => boolean`                  | After method, filters elements      |
 | `errorHandler`     | `ErrorHandlerProvider`                      | `(error: Error) => void`                     | On error, inspects                  |
 | `errorMapping`     | `ErrorMappingConstraintHandlerProvider`     | `(error: Error) => Error`                    | On error, transforms                |
+| `subscription`     | `SubscriptionHandlerProvider`              | `(subscription: any) => void`                | On subscribe (streaming only)       |
+| `request`          | `RequestHandlerProvider`                   | `(count: number) => void`                    | On request (streaming only)         |
+
+### MethodInvocationContext
 
 The `MethodInvocationContext` provides:
 
@@ -261,6 +303,103 @@ Filters array elements or nullifies single values that do not meet conditions.
 
 The built-in content filter supports **simple dot-notation paths only** (`$.field.nested`). Recursive descent (`$..ssn`), bracket notation (`$['field']`), array indexing (`$.items[0]`), wildcards (`$.users[*].email`), and filter expressions (`$.books[?(@.price<10)]`) are not supported and will throw an error.
 
+## Streaming Enforcement
+
+For SSE endpoints that return `Observable<T>`, three streaming decorators provide continuous authorization where the PDP streams decisions over time. Access may flip between PERMIT and DENY based on time, location, or context changes.
+
+### When to Use Which Strategy
+
+| Scenario                                         | Strategy                      |
+|--------------------------------------------------|-------------------------------|
+| Access loss is permanent (revoked credentials)   | `@EnforceTillDenied`         |
+| Client doesn't need to know about gaps           | `@EnforceDropWhileDenied`    |
+| Client should show suspended/restored status     | `@EnforceRecoverableIfDenied` |
+
+### @EnforceTillDenied
+
+Stream terminates on first non-PERMIT decision. Use for streams where denial is a terminal condition.
+
+```typescript
+import { Controller, Sse } from '@nestjs/common';
+import { Observable, interval, map } from 'rxjs';
+import { EnforceTillDenied } from '@sapl/nestjs';
+
+@Injectable()
+export class HeartbeatService {
+  @EnforceTillDenied({
+    action: 'stream:heartbeat',
+    resource: 'heartbeat',
+    onStreamDeny: (decision, subscriber) => {
+      subscriber.next({ data: JSON.stringify({ type: 'ACCESS_DENIED' }) });
+    },
+  })
+  heartbeat(): Observable<any> {
+    return interval(2000).pipe(
+      map((i) => ({ data: JSON.stringify({ seq: i }) })),
+    );
+  }
+}
+```
+
+The `onStreamDeny` callback receives the PDP decision and the RxJS `Subscriber`. Calling `subscriber.next()` injects an event into the output stream before the stream terminates with a `ForbiddenException`.
+
+### @EnforceDropWhileDenied
+
+Silently drops data during DENY periods. Stream stays alive and resumes forwarding on re-PERMIT. No callbacks -- data is simply not forwarded while denied.
+
+```typescript
+@EnforceDropWhileDenied({
+  action: 'stream:heartbeat',
+  resource: 'heartbeat',
+})
+heartbeat(): Observable<any> {
+  return interval(2000).pipe(
+    map((i) => ({ data: JSON.stringify({ seq: i }) })),
+  );
+}
+```
+
+### @EnforceRecoverableIfDenied
+
+In-band deny/recover signals via subscriber callbacks. Edge-triggered: `onStreamDeny` fires only on PERMIT-to-DENY transition, `onStreamRecover` fires only on DENY-to-PERMIT transition. Repeated same-state decisions do not re-fire callbacks.
+
+```typescript
+@EnforceRecoverableIfDenied({
+  action: 'stream:heartbeat',
+  resource: 'heartbeat',
+  onStreamDeny: (decision, subscriber) => {
+    subscriber.next({ data: JSON.stringify({ type: 'ACCESS_SUSPENDED' }) });
+  },
+  onStreamRecover: (decision, subscriber) => {
+    subscriber.next({ data: JSON.stringify({ type: 'ACCESS_RESTORED' }) });
+  },
+})
+heartbeat(): Observable<any> {
+  return interval(2000).pipe(
+    map((i) => ({ data: JSON.stringify({ seq: i }) })),
+  );
+}
+```
+
+### Decision Lifecycle
+
+All three streaming aspects:
+- Subscribe to `PdpService.decide()` which opens an SSE connection to the PDP
+- On each PERMIT decision, build a `StreamingConstraintHandlerBundle` that applies constraint handlers to each data element
+- Hot-swap the constraint handler bundle when a new PERMIT decision arrives with different obligations
+- Run best-effort constraint handlers on DENY decisions
+- Clean up both the PDP subscription and source subscription on unsubscribe
+
+### Streaming Signals
+
+Runnables can target different lifecycle signals:
+
+| Signal          | When it fires                           |
+|-----------------|----------------------------------------|
+| `ON_DECISION`   | Each time a new PDP decision arrives   |
+| `ON_COMPLETE`   | When the source Observable completes   |
+| `ON_CANCEL`     | When the subscriber unsubscribes       |
+
 ## Manual PDP Access
 
 ```typescript
@@ -311,6 +450,17 @@ SaplModule.forRoot({
 ```
 
 The `cls` options are merged into the default configuration (`{ global: true, middleware: { mount: true } }`), so you only need to specify the parts you want to customize.
+
+## Troubleshooting
+
+| Symptom | Likely Cause | Fix |
+|---------|-------------|-----|
+| All decisions are INDETERMINATE | PDP unreachable | Check `baseUrl` and that PDP is running |
+| 403 despite PERMIT decision | Unhandled obligation | Check handler `isResponsible()` matches the obligation `type` |
+| Handler not firing | Missing registration | Add `@SaplConstraintHandler(type)` + add to module `providers` |
+| `req.user` is undefined | No auth guard | Add `@UseGuards()` or set subject explicitly in EnforceOptions |
+| Content filter throws | Unsupported JSONPath | Only simple dot paths supported (`$.field.nested`) |
+| CLS context missing | Module order | Ensure `SaplModule` is imported before modules that use it |
 
 ## License
 

@@ -7,6 +7,9 @@ import { SaplModuleOptions, SaplModuleAsyncOptions } from './sapl.interfaces';
 import { PdpService } from './pdp.service';
 import { PreEnforceAspect } from './PreEnforceAspect';
 import { PostEnforceAspect } from './PostEnforceAspect';
+import { EnforceTillDeniedAspect } from './EnforceTillDeniedAspect';
+import { EnforceDropWhileDeniedAspect } from './EnforceDropWhileDeniedAspect';
+import { EnforceRecoverableIfDeniedAspect } from './EnforceRecoverableIfDeniedAspect';
 import { ConstraintEnforcementService } from './constraints/ConstraintEnforcementService';
 import { ContentFilteringProvider } from './constraints/providers/ContentFilteringProvider';
 import { ContentFilterPredicateProvider } from './constraints/providers/ContentFilterPredicateProvider';
@@ -18,6 +21,9 @@ const SHARED_PROVIDERS = [
   ContentFilterPredicateProvider,
   PreEnforceAspect,
   PostEnforceAspect,
+  EnforceTillDeniedAspect,
+  EnforceDropWhileDeniedAspect,
+  EnforceRecoverableIfDeniedAspect,
 ];
 
 @Module({})

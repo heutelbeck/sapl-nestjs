@@ -4,6 +4,10 @@ import { MethodInvocationContext } from '../MethodInvocationContext';
 import { SaplConstraintHandler, ConstraintHandlerType } from './SaplConstraintHandler';
 import { ConstraintHandlerBundle, NO_RESOURCE_REPLACEMENT } from './ConstraintHandlerBundle';
 import {
+  StreamingConstraintHandlerBundle,
+  NO_RESOURCE_REPLACEMENT as STREAMING_NO_RESOURCE_REPLACEMENT,
+} from './StreamingConstraintHandlerBundle';
+import {
   Signal,
   Responsible,
   RunnableConstraintHandlerProvider,
@@ -13,6 +17,8 @@ import {
   ErrorMappingConstraintHandlerProvider,
   FilterPredicateConstraintHandlerProvider,
   MethodInvocationConstraintHandlerProvider,
+  SubscriptionHandlerProvider,
+  RequestHandlerProvider,
 } from './api/index';
 
 type HandlerLists = {
@@ -23,6 +29,8 @@ type HandlerLists = {
   errorMapping: ErrorMappingConstraintHandlerProvider[];
   filterPredicate: FilterPredicateConstraintHandlerProvider[];
   methodInvocation: MethodInvocationConstraintHandlerProvider[];
+  subscription: SubscriptionHandlerProvider[];
+  request: RequestHandlerProvider[];
 };
 
 function runBoth(a: () => void, b: () => void): () => void {
@@ -62,6 +70,20 @@ function errorMapBoth(
   b: (e: Error) => Error,
 ): (e: Error) => Error {
   return (e) => b(a(e));
+}
+
+function composeSubscriptionHandlers(
+  a: (s: any) => void,
+  b: (s: any) => void,
+): (s: any) => void {
+  return (s) => { a(s); b(s); };
+}
+
+function composeRequestHandlers(
+  a: (c: number) => void,
+  b: (c: number) => void,
+): (c: number) => void {
+  return (c) => { a(c); b(c); };
 }
 
 function wrapObligation<A extends any[], R>(
@@ -127,6 +149,8 @@ export class ConstraintEnforcementService implements OnModuleInit {
     errorMapping: [],
     filterPredicate: [],
     methodInvocation: [],
+    subscription: [],
+    request: [],
   };
 
   constructor(private readonly discovery: DiscoveryService) {}
@@ -165,6 +189,14 @@ export class ConstraintEnforcementService implements OnModuleInit {
 
   bestEffortBundleFor(decision: any): ConstraintHandlerBundle {
     return this.buildBundle(decision, false, true);
+  }
+
+  streamingBundleFor(decision: any): StreamingConstraintHandlerBundle {
+    return this.buildStreamingBundle(decision, false);
+  }
+
+  streamingBestEffortBundleFor(decision: any): StreamingConstraintHandlerBundle {
+    return this.buildStreamingBundle(decision, true);
   }
 
   private buildBundle(
@@ -416,5 +448,183 @@ export class ConstraintEnforcementService implements OnModuleInit {
     b: (context: MethodInvocationContext) => void,
   ): (context: MethodInvocationContext) => void {
     return (context) => { a(context); b(context); };
+  }
+
+  private buildStreamingBundle(
+    decision: any,
+    bestEffort: boolean,
+  ): StreamingConstraintHandlerBundle {
+    const obligations: any[] = decision.obligations ?? [];
+    const advice: any[] = decision.advice ?? [];
+    const unhandledObligations = new Set<number>(obligations.map((_: any, i: number) => i));
+
+    let onDecision: () => void = () => {};
+    let onComplete: () => void = () => {};
+    let onCancel: () => void = () => {};
+    let onSubscribe: (subscription: any) => void = () => {};
+    let onRequest: (count: number) => void = () => {};
+    let filterPredicate: (element: any) => boolean = () => true;
+    let doOnNext: (value: any) => void = () => {};
+    let mapNext: (value: any) => any = (v) => v;
+    let doOnError: (error: Error) => void = () => {};
+    let mapError: (error: Error) => Error = (e) => e;
+
+    const replaceResource = decision.resource !== undefined ? decision.resource : STREAMING_NO_RESOURCE_REPLACEMENT;
+
+    const obligationIsStrict = !bestEffort;
+
+    for (let i = 0; i < obligations.length; i++) {
+      const constraint = obligations[i];
+
+      this.processRunnablesBySignal(constraint, obligationIsStrict, unhandledObligations, i, Signal.ON_DECISION, (h) => {
+        onDecision = runBoth(onDecision, h);
+      });
+      this.processRunnablesBySignal(constraint, obligationIsStrict, unhandledObligations, i, Signal.ON_COMPLETE, (h) => {
+        onComplete = runBoth(onComplete, h);
+      });
+      this.processRunnablesBySignal(constraint, obligationIsStrict, unhandledObligations, i, Signal.ON_CANCEL, (h) => {
+        onCancel = runBoth(onCancel, h);
+      });
+
+      this.processSubscriptionHandlers(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
+        onSubscribe = composeSubscriptionHandlers(onSubscribe, h);
+      });
+      this.processRequestHandlers(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
+        onRequest = composeRequestHandlers(onRequest, h);
+      });
+
+      this.processFilterPredicates(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
+        filterPredicate = filterBoth(filterPredicate, h);
+      });
+      this.processConsumers(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
+        doOnNext = consumeWithBoth(doOnNext, h);
+      });
+      this.processMappings(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
+        mapNext = mapBoth(mapNext, h);
+      });
+      this.processErrorHandlers(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
+        doOnError = errorConsumeBoth(doOnError, h);
+      });
+      this.processErrorMappings(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
+        mapError = errorMapBoth(mapError, h);
+      });
+    }
+
+    if (!bestEffort && unhandledObligations.size > 0) {
+      const unhandled = [...unhandledObligations].map((i) => obligations[i]);
+      this.logger.error(
+        `Unhandled obligations: ${JSON.stringify(unhandled)}`,
+      );
+      throw new ForbiddenException(
+        'Access denied: unhandled obligation constraints',
+      );
+    }
+
+    for (let i = 0; i < advice.length; i++) {
+      const constraint = advice[i];
+
+      this.processRunnablesBySignal(constraint, false, undefined, i, Signal.ON_DECISION, (h) => {
+        onDecision = runBoth(onDecision, h);
+      });
+      this.processRunnablesBySignal(constraint, false, undefined, i, Signal.ON_COMPLETE, (h) => {
+        onComplete = runBoth(onComplete, h);
+      });
+      this.processRunnablesBySignal(constraint, false, undefined, i, Signal.ON_CANCEL, (h) => {
+        onCancel = runBoth(onCancel, h);
+      });
+
+      this.processSubscriptionHandlers(constraint, false, undefined, i, (h) => {
+        onSubscribe = composeSubscriptionHandlers(onSubscribe, h);
+      });
+      this.processRequestHandlers(constraint, false, undefined, i, (h) => {
+        onRequest = composeRequestHandlers(onRequest, h);
+      });
+
+      this.processFilterPredicates(constraint, false, undefined, i, (h) => {
+        filterPredicate = filterBoth(filterPredicate, h);
+      });
+      this.processConsumers(constraint, false, undefined, i, (h) => {
+        doOnNext = consumeWithBoth(doOnNext, h);
+      });
+      this.processMappings(constraint, false, undefined, i, (h) => {
+        mapNext = mapBoth(mapNext, h);
+      });
+      this.processErrorHandlers(constraint, false, undefined, i, (h) => {
+        doOnError = errorConsumeBoth(doOnError, h);
+      });
+      this.processErrorMappings(constraint, false, undefined, i, (h) => {
+        mapError = errorMapBoth(mapError, h);
+      });
+    }
+
+    return new StreamingConstraintHandlerBundle(
+      onDecision,
+      onSubscribe,
+      onRequest,
+      replaceResource,
+      filterPredicate,
+      doOnNext,
+      mapNext,
+      doOnError,
+      mapError,
+      onComplete,
+      onCancel,
+    );
+  }
+
+  private processRunnablesBySignal(
+    constraint: any,
+    isObligation: boolean,
+    unhandled: Set<number> | undefined,
+    index: number,
+    signal: Signal,
+    compose: (handler: () => void) => void,
+  ): void {
+    for (const provider of this.handlers.runnable) {
+      if (!provider.isResponsible(constraint)) continue;
+      if (provider.getSignal() !== signal) continue;
+      unhandled?.delete(index);
+      const raw = provider.getHandler(constraint);
+      const wrapped = isObligation
+        ? wrapObligation(raw, constraint, this.logger)
+        : wrapAdvice(raw, constraint, this.logger, undefined as any);
+      compose(wrapped);
+    }
+  }
+
+  private processSubscriptionHandlers(
+    constraint: any,
+    isObligation: boolean,
+    unhandled: Set<number> | undefined,
+    index: number,
+    compose: (handler: (subscription: any) => void) => void,
+  ): void {
+    for (const provider of this.handlers.subscription) {
+      if (!provider.isResponsible(constraint)) continue;
+      unhandled?.delete(index);
+      const raw = provider.getHandler(constraint);
+      const wrapped = isObligation
+        ? wrapObligation(raw, constraint, this.logger)
+        : wrapAdvice(raw, constraint, this.logger, undefined as any);
+      compose(wrapped);
+    }
+  }
+
+  private processRequestHandlers(
+    constraint: any,
+    isObligation: boolean,
+    unhandled: Set<number> | undefined,
+    index: number,
+    compose: (handler: (count: number) => void) => void,
+  ): void {
+    for (const provider of this.handlers.request) {
+      if (!provider.isResponsible(constraint)) continue;
+      unhandled?.delete(index);
+      const raw = provider.getHandler(constraint);
+      const wrapped = isObligation
+        ? wrapObligation(raw, constraint, this.logger)
+        : wrapAdvice(raw, constraint, this.logger, undefined as any);
+      compose(wrapped);
+    }
   }
 }
