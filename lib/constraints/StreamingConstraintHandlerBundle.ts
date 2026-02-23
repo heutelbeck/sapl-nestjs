@@ -1,10 +1,8 @@
-export const NO_RESOURCE_REPLACEMENT = Symbol('NO_RESOURCE_REPLACEMENT');
+import { applyNextConstraints, applyErrorConstraints } from './ConstraintHandlerBundle';
 
 export class StreamingConstraintHandlerBundle {
   constructor(
     private readonly onDecisionHandlers: () => void,
-    private readonly onSubscribeHandlers: (subscription: any) => void,
-    private readonly onRequestHandlers: (count: number) => void,
     private readonly replaceResource: any,
     private readonly filterPredicateHandler: (element: any) => boolean,
     private readonly doOnNextHandler: (value: any) => void,
@@ -19,30 +17,18 @@ export class StreamingConstraintHandlerBundle {
     this.onDecisionHandlers();
   }
 
-  handleOnSubscribeConstraints(subscription: any): void {
-    this.onSubscribeHandlers(subscription);
-  }
-
-  handleOnRequestConstraints(count: number): void {
-    this.onRequestHandlers(count);
-  }
-
   handleAllOnNextConstraints(value: any): any {
-    let current = this.replaceResource !== NO_RESOURCE_REPLACEMENT ? this.replaceResource : value;
-
-    if (Array.isArray(current)) {
-      current = current.filter(this.filterPredicateHandler);
-    } else if (current !== null && !this.filterPredicateHandler(current)) {
-      current = null;
-    }
-
-    this.doOnNextHandler(current);
-    return this.mapNextHandler(current);
+    return applyNextConstraints(
+      value,
+      this.replaceResource,
+      this.filterPredicateHandler,
+      this.doOnNextHandler,
+      this.mapNextHandler,
+    );
   }
 
   handleAllOnErrorConstraints(error: Error): Error {
-    this.doOnErrorHandler(error);
-    return this.mapErrorHandler(error);
+    return applyErrorConstraints(error, this.doOnErrorHandler, this.mapErrorHandler);
   }
 
   handleOnCompleteConstraints(): void {

@@ -13,7 +13,7 @@ export interface SubscriptionContext {
   /** Route parameters -- @Get(':pilotId') -> ctx.params.pilotId */
   params: Record<string, string>;
   /** Query string parameters -- ?page=2 -> ctx.query.page */
-  query: Record<string, string>;
+  query: Record<string, string | string[]>;
   /** Request body (POST/PUT) */
   body: any;
   /** Handler method name on the controller */

@@ -1,5 +1,4 @@
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const safe = require('safe-regex2') as (pattern: string | RegExp) => boolean;
+import safe from 'safe-regex2';
 
 const BLACK_SQUARE = '\u2588';
 
@@ -15,22 +14,28 @@ function getByPath(obj: any, segments: string[]): any {
 function setByPath(obj: any, segments: string[], value: any): void {
   let current = obj;
   for (let i = 0; i < segments.length - 1; i++) {
+    if (DANGEROUS_SEGMENTS.has(segments[i])) return;
     if (current == null || typeof current !== 'object') return;
     current = current[segments[i]];
   }
+  const target = segments[segments.length - 1];
+  if (DANGEROUS_SEGMENTS.has(target)) return;
   if (current != null && typeof current === 'object') {
-    current[segments[segments.length - 1]] = value;
+    current[target] = value;
   }
 }
 
 function deleteByPath(obj: any, segments: string[]): void {
   let current = obj;
   for (let i = 0; i < segments.length - 1; i++) {
+    if (DANGEROUS_SEGMENTS.has(segments[i])) return;
     if (current == null || typeof current !== 'object') return;
     current = current[segments[i]];
   }
+  const target = segments[segments.length - 1];
+  if (DANGEROUS_SEGMENTS.has(target)) return;
   if (current != null && typeof current === 'object') {
-    delete current[segments[segments.length - 1]];
+    delete current[target];
   }
 }
 
@@ -200,7 +205,7 @@ export function getHandler(constraint: any): (value: any) => any {
       if (conditions.length > 0 && !meetsConditions(element, conditions)) {
         return element;
       }
-      const copy = JSON.parse(JSON.stringify(element));
+      const copy = structuredClone(element);
       for (const action of actions) {
         applyAction(copy, action);
       }

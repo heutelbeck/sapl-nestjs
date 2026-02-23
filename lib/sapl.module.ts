@@ -49,6 +49,11 @@ export class SaplModule {
     };
   }
 
+  // Custom CLS options (like forRoot's `cls` field) are not supported here
+  // because module imports are resolved before the async factory runs. The
+  // factory result (SaplModuleOptions) is not available at import time, so
+  // ClsModule always gets the defaults. Users who need custom CLS setup can
+  // inject ClsService in a guard or interceptor instead.
   static forRootAsync(asyncOptions: SaplModuleAsyncOptions): DynamicModule {
     return {
       module: SaplModule,

@@ -13,8 +13,6 @@ import {
   ErrorMappingConstraintHandlerProvider,
   FilterPredicateConstraintHandlerProvider,
   MethodInvocationConstraintHandlerProvider,
-  SubscriptionHandlerProvider,
-  RequestHandlerProvider,
 } from '../../lib/constraints/api/index';
 import { MethodInvocationContext } from '../../lib/MethodInvocationContext';
 import { ContentFilteringProvider } from '../../lib/constraints/providers/ContentFilteringProvider';
@@ -119,22 +117,6 @@ class OnCancelRunnableProvider implements RunnableConstraintHandlerProvider {
   isResponsible(constraint: any) { return constraint?.type === 'onCancelCleanup'; }
   getSignal() { return Signal.ON_CANCEL; }
   getHandler(constraint: any) { return () => { this.calls.push(constraint); }; }
-}
-
-@Injectable()
-@SaplConstraintHandler('subscription')
-class SubscriptionHandlerTestProvider implements SubscriptionHandlerProvider {
-  captured: any[] = [];
-  isResponsible(constraint: any) { return constraint?.type === 'onSubscribe'; }
-  getHandler(_constraint: any) { return (subscription: any) => { this.captured.push(subscription); }; }
-}
-
-@Injectable()
-@SaplConstraintHandler('request')
-class RequestHandlerTestProvider implements RequestHandlerProvider {
-  captured: number[] = [];
-  isResponsible(constraint: any) { return constraint?.type === 'onRequest'; }
-  getHandler(_constraint: any) { return (count: number) => { this.captured.push(count); }; }
 }
 
 // -- Helpers ---------------------------------------------------------------
@@ -304,7 +286,7 @@ describe('ConstraintEnforcementService', () => {
         providers: [InjectHeaderProvider],
         constraint: { type: 'injectHeader', headerName: 'x-audit', value: 'injected' },
         verify: (bundle: any) => {
-          const request = { headers: {}, params: {}, body: {} };
+          const request = { headers: {} as Record<string, string>, params: {}, body: {} };
           bundle.handleMethodInvocationHandlers({ request, args: [], methodName: 'test', className: 'Test' });
           expect(request.headers['x-audit']).toBe('injected');
         },
@@ -686,30 +668,6 @@ describe('ConstraintEnforcementService', () => {
       expect(getProvider(OnCancelRunnableProvider).calls).toEqual([{ type: 'onCancelCleanup' }]);
     });
 
-    test('whenSubscriptionHandlerObligationThenIncludedInBundle', async () => {
-      const { service, getProvider } = await createService([SubscriptionHandlerTestProvider]);
-
-      const bundle = service.streamingBundleFor({
-        decision: 'PERMIT',
-        obligations: [{ type: 'onSubscribe' }],
-      });
-
-      bundle.handleOnSubscribeConstraints({ id: 'sub1' });
-      expect(getProvider(SubscriptionHandlerTestProvider).captured).toEqual([{ id: 'sub1' }]);
-    });
-
-    test('whenRequestHandlerObligationThenIncludedInBundle', async () => {
-      const { service, getProvider } = await createService([RequestHandlerTestProvider]);
-
-      const bundle = service.streamingBundleFor({
-        decision: 'PERMIT',
-        obligations: [{ type: 'onRequest' }],
-      });
-
-      bundle.handleOnRequestConstraints(10);
-      expect(getProvider(RequestHandlerTestProvider).captured).toEqual([10]);
-    });
-
     test('whenMappingObligationThenIncludedInBundle', async () => {
       const { service } = await createService([LowPriorityMappingProvider]);
 
@@ -797,7 +755,6 @@ describe('ConstraintEnforcementService', () => {
         LogOnDecisionProvider,
         OnCompleteRunnableProvider,
         OnCancelRunnableProvider,
-        SubscriptionHandlerTestProvider,
         AuditConsumerProvider,
       ]);
 
@@ -807,7 +764,6 @@ describe('ConstraintEnforcementService', () => {
           { type: 'logAccess' },
           { type: 'onCompleteLog' },
           { type: 'onCancelCleanup' },
-          { type: 'onSubscribe' },
           { type: 'auditLog' },
         ],
       });
@@ -815,13 +771,11 @@ describe('ConstraintEnforcementService', () => {
       bundle.handleOnDecisionConstraints();
       bundle.handleOnCompleteConstraints();
       bundle.handleOnCancelConstraints();
-      bundle.handleOnSubscribeConstraints({});
       bundle.handleAllOnNextConstraints({ data: 'test' });
 
       expect(getProvider(LogOnDecisionProvider).calls).toHaveLength(1);
       expect(getProvider(OnCompleteRunnableProvider).calls).toHaveLength(1);
       expect(getProvider(OnCancelRunnableProvider).calls).toHaveLength(1);
-      expect(getProvider(SubscriptionHandlerTestProvider).captured).toHaveLength(1);
       expect(getProvider(AuditConsumerProvider).captured).toHaveLength(1);
     });
 

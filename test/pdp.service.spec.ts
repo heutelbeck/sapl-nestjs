@@ -5,6 +5,7 @@ function createService(overrides: Record<string, any> = {}): PdpService {
   return new PdpService({
     baseUrl: 'http://localhost:8443',
     timeout: 5000,
+    streamingMaxRetries: 0,
     ...overrides,
   });
 }
@@ -33,6 +34,15 @@ function mockFetchResponse(body: ReadableStream, status = 200): Response {
     text: () => Promise.resolve(''),
     headers: new Headers(),
   } as any;
+}
+
+/** Filter out trailing INDETERMINATE emitted on stream-end */
+function decisions(emissions: any[]): any[] {
+  const last = emissions[emissions.length - 1];
+  if (last?.decision === 'INDETERMINATE') {
+    return emissions.slice(0, -1);
+  }
+  return emissions;
 }
 
 describe('PdpService', () => {
@@ -93,6 +103,19 @@ describe('PdpService', () => {
       expect(result).toEqual({ decision: 'INDETERMINATE' });
     });
 
+    test('whenTokenConfiguredThenAuthorizationHeaderSent', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ decision: 'PERMIT' }),
+      });
+
+      const service = createService({ token: 'my-token' });
+      await service.decideOnce({ subject: 'user', action: 'read', resource: 'data' });
+
+      const [, init] = (globalThis.fetch as jest.Mock).mock.calls[0];
+      expect(init.headers['Authorization']).toBe('Bearer my-token');
+    });
+
     test('whenResponseBodyMalformedThenResolvesWithIndeterminate', async () => {
       globalThis.fetch = jest.fn().mockResolvedValue({
         ok: true,
@@ -120,30 +143,33 @@ describe('PdpService', () => {
 
       service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
         next: (d) => emissions.push(d),
-        complete: () => {
-          expect(emissions).toEqual([
+        error: () => {
+          expect(decisions(emissions)).toEqual([
             { decision: 'PERMIT' },
             { decision: 'DENY' },
             { decision: 'PERMIT' },
           ]);
           done();
         },
-        error: done,
       });
     });
 
-    test('whenPdpStreamEndsThenObservableCompletes', (done) => {
+    test('whenPdpStreamEndsThenEmitsIndeterminateAndErrors', (done) => {
       const stream = createReadableStream([
         'data: {"decision":"PERMIT"}\n\n',
       ]);
       globalThis.fetch = jest.fn().mockResolvedValue(mockFetchResponse(stream));
 
       const service = createService();
+      const emissions: any[] = [];
 
       service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
-        next: () => {},
-        complete: () => done(),
-        error: done,
+        next: (d) => emissions.push(d),
+        error: (err) => {
+          expect(emissions).toContainEqual({ decision: 'INDETERMINATE' });
+          expect(err.message).toBe('PDP decision stream ended unexpectedly');
+          done();
+        },
       });
     });
 
@@ -191,14 +217,13 @@ describe('PdpService', () => {
 
       service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
         next: (d) => emissions.push(d),
-        complete: () => {
-          expect(emissions).toEqual([
+        error: () => {
+          expect(decisions(emissions)).toEqual([
             { decision: 'PERMIT' },
             { decision: 'DENY' },
           ]);
           done();
         },
-        error: done,
       });
     });
 
@@ -214,11 +239,10 @@ describe('PdpService', () => {
 
       service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
         next: (d) => emissions.push(d),
-        complete: () => {
-          expect(emissions).toEqual([{ decision: 'PERMIT' }]);
+        error: () => {
+          expect(decisions(emissions)).toEqual([{ decision: 'PERMIT' }]);
           done();
         },
-        error: done,
       });
     });
 
@@ -234,11 +258,32 @@ describe('PdpService', () => {
 
       service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
         next: (d) => emissions.push(d),
-        complete: () => {
-          expect(emissions).toEqual([{ decision: 'PERMIT' }]);
+        error: () => {
+          expect(decisions(emissions)).toEqual([{ decision: 'PERMIT' }]);
           done();
         },
-        error: done,
+      });
+    });
+
+    test('whenStreamingResponseHasNullBodyThenEmitsIndeterminateAndErrors', (done) => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        body: null,
+        headers: new Headers(),
+      });
+
+      const service = createService();
+      const emissions: any[] = [];
+
+      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        next: (d) => emissions.push(d),
+        error: (err) => {
+          expect(emissions).toContainEqual({ decision: 'INDETERMINATE' });
+          expect(err.message).toBe('PDP streaming response has no body');
+          done();
+        },
       });
     });
 
@@ -272,13 +317,12 @@ describe('PdpService', () => {
       const service = createService({ token: 'my-token' });
 
       service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
-        complete: () => {
+        error: () => {
           const [, init] = (globalThis.fetch as jest.Mock).mock.calls[0];
           expect(init.headers['Authorization']).toBe('Bearer my-token');
           expect(init.headers['Accept']).toBe('application/x-ndjson');
           done();
         },
-        error: done,
       });
     });
 
@@ -297,16 +341,155 @@ describe('PdpService', () => {
 
       service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
         next: (d) => emissions.push(d),
-        complete: () => {
-          expect(emissions).toEqual([
+        error: () => {
+          expect(decisions(emissions)).toEqual([
             { decision: 'PERMIT' },
             { decision: 'DENY' },
             { decision: 'PERMIT' },
           ]);
           done();
         },
-        error: done,
       });
+    });
+  });
+
+  describe('decide retry', () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    test('whenConnectionFailsThenRetriesAndRecovers', async () => {
+      let fetchCallCount = 0;
+
+      globalThis.fetch = jest.fn().mockImplementation(() => {
+        fetchCallCount++;
+        if (fetchCallCount === 1) {
+          return Promise.reject(new Error('Connection refused'));
+        }
+        const stream = createReadableStream(['data: {"decision":"PERMIT"}\n\n']);
+        return Promise.resolve(mockFetchResponse(stream));
+      });
+
+      const service = createService({
+        streamingMaxRetries: 3,
+        streamingRetryBaseDelay: 1000,
+        streamingRetryMaxDelay: 5000,
+      });
+      const emissions: any[] = [];
+      let errorSeen = false;
+
+      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        next: (d) => emissions.push(d),
+        error: () => { errorSeen = true; },
+      });
+
+      // Flush: first fetch rejects -> INDETERMINATE emitted -> retry delay starts
+      await jest.advanceTimersByTimeAsync(0);
+      expect(emissions).toContainEqual({ decision: 'INDETERMINATE' });
+
+      // Advance past retry delay (1000ms) -> second fetch succeeds
+      await jest.advanceTimersByTimeAsync(1000);
+      await jest.advanceTimersByTimeAsync(0);
+
+      expect(fetchCallCount).toBe(2);
+      expect(emissions).toContainEqual({ decision: 'PERMIT' });
+    });
+
+    test('whenStreamDisconnectsThenReconnectsAndResumesDecisions', async () => {
+      let fetchCallCount = 0;
+
+      globalThis.fetch = jest.fn().mockImplementation(() => {
+        fetchCallCount++;
+        const stream = createReadableStream([
+          `data: {"decision":"PERMIT","attempt":${fetchCallCount}}\n\n`,
+        ]);
+        return Promise.resolve(mockFetchResponse(stream));
+      });
+
+      const service = createService({
+        streamingMaxRetries: 2,
+        streamingRetryBaseDelay: 100,
+        streamingRetryMaxDelay: 500,
+      });
+      const emissions: any[] = [];
+      let finalError: Error | null = null;
+
+      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        next: (d) => emissions.push(d),
+        error: (e) => { finalError = e; },
+      });
+
+      // Attempt 1: stream opens, PERMIT emitted, stream ends -> INDETERMINATE -> retry
+      await jest.advanceTimersByTimeAsync(0);
+      // Retry 1 delay: 100ms
+      await jest.advanceTimersByTimeAsync(100);
+      await jest.advanceTimersByTimeAsync(0);
+      // Retry 2 delay: 200ms
+      await jest.advanceTimersByTimeAsync(200);
+      await jest.advanceTimersByTimeAsync(0);
+      // Max retries exceeded
+      await jest.advanceTimersByTimeAsync(0);
+
+      expect(fetchCallCount).toBe(3);
+      const permits = emissions.filter((e) => e.decision === 'PERMIT');
+      expect(permits.length).toBe(3);
+      expect(finalError).not.toBeNull();
+    });
+
+    test('whenMaxRetriesExceededThenErrorPropagates', async () => {
+      globalThis.fetch = jest.fn().mockRejectedValue(new Error('Connection refused'));
+
+      const service = createService({
+        streamingMaxRetries: 2,
+        streamingRetryBaseDelay: 100,
+        streamingRetryMaxDelay: 500,
+      });
+      let finalError: Error | null = null;
+
+      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        error: (err) => { finalError = err; },
+      });
+
+      // Attempt 1 fails
+      await jest.advanceTimersByTimeAsync(0);
+      // Retry 1 delay: 100ms
+      await jest.advanceTimersByTimeAsync(100);
+      await jest.advanceTimersByTimeAsync(0);
+      // Retry 2 delay: 200ms
+      await jest.advanceTimersByTimeAsync(200);
+      await jest.advanceTimersByTimeAsync(0);
+
+      // 1 initial + 2 retries = 3 total fetch calls
+      expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+      expect(finalError).toBeInstanceOf(Error);
+    });
+
+    test('whenUnsubscribedDuringRetryDelayThenCleansUp', async () => {
+      globalThis.fetch = jest.fn().mockRejectedValue(new Error('Connection refused'));
+
+      const service = createService({
+        streamingMaxRetries: Infinity,
+        streamingRetryBaseDelay: 60000,
+      });
+
+      const sub = service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        error: () => {},
+      });
+
+      // First attempt fails -> retry delay starts (60s)
+      await jest.advanceTimersByTimeAsync(0);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+      // Unsubscribe during the long retry delay
+      sub.unsubscribe();
+
+      // Advance well past the delay -- no new fetch should happen
+      await jest.advanceTimersByTimeAsync(120000);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -1,12 +1,8 @@
-import {
-  StreamingConstraintHandlerBundle,
-  NO_RESOURCE_REPLACEMENT,
-} from '../../lib/constraints/StreamingConstraintHandlerBundle';
+import { StreamingConstraintHandlerBundle } from '../../lib/constraints/StreamingConstraintHandlerBundle';
+import { NO_RESOURCE_REPLACEMENT } from '../../lib/constraints/api/index';
 
 function noop() {}
 function noopConsumer(_v: any) {}
-function noopSubscription(_s: any) {}
-function noopRequest(_c: number) {}
 function identity(v: any) { return v; }
 function alwaysTrue(_v: any) { return true; }
 function noopError(_e: Error) {}
@@ -14,8 +10,6 @@ function identityError(e: Error) { return e; }
 
 function createBundle(overrides: Partial<{
   onDecision: () => void;
-  onSubscribe: (subscription: any) => void;
-  onRequest: (count: number) => void;
   replaceResource: any;
   filterPredicate: (element: any) => boolean;
   doOnNext: (value: any) => void;
@@ -27,8 +21,6 @@ function createBundle(overrides: Partial<{
 }> = {}): StreamingConstraintHandlerBundle {
   return new StreamingConstraintHandlerBundle(
     overrides.onDecision ?? noop,
-    overrides.onSubscribe ?? noopSubscription,
-    overrides.onRequest ?? noopRequest,
     overrides.replaceResource ?? NO_RESOURCE_REPLACEMENT,
     overrides.filterPredicate ?? alwaysTrue,
     overrides.doOnNext ?? noopConsumer,
@@ -54,42 +46,6 @@ describe('StreamingConstraintHandlerBundle', () => {
     test('whenNoRunnablesThenNoOp', () => {
       const bundle = createBundle();
       expect(() => bundle.handleOnDecisionConstraints()).not.toThrow();
-    });
-  });
-
-  describe('handleOnSubscribeConstraints', () => {
-    test('whenCalledThenRunsSubscriptionHandlers', () => {
-      const captured: any[] = [];
-      const bundle = createBundle({
-        onSubscribe: (s) => captured.push(s),
-      });
-
-      bundle.handleOnSubscribeConstraints({ id: 'sub1' });
-
-      expect(captured).toEqual([{ id: 'sub1' }]);
-    });
-
-    test('whenNoHandlersThenNoOp', () => {
-      const bundle = createBundle();
-      expect(() => bundle.handleOnSubscribeConstraints({})).not.toThrow();
-    });
-  });
-
-  describe('handleOnRequestConstraints', () => {
-    test('whenCalledThenRunsRequestHandlersWithCount', () => {
-      const captured: number[] = [];
-      const bundle = createBundle({
-        onRequest: (c) => captured.push(c),
-      });
-
-      bundle.handleOnRequestConstraints(42);
-
-      expect(captured).toEqual([42]);
-    });
-
-    test('whenNoHandlersThenNoOp', () => {
-      const bundle = createBundle();
-      expect(() => bundle.handleOnRequestConstraints(1)).not.toThrow();
     });
   });
 

@@ -1,12 +1,13 @@
-import { ForbiddenException, Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { Aspect, LazyDecorator, WrapParams } from '@toss/nestjs-aop';
-import { ClsService, CLS_REQ } from 'nestjs-cls';
+import { ClsService } from 'nestjs-cls';
 import { POST_ENFORCE_SYMBOL } from './PostEnforce';
 import { EnforceOptions } from './EnforceOptions';
 import { PdpService } from './pdp.service';
+import { buildContext, buildSubscriptionFromContext } from './SubscriptionBuilder';
 import { SubscriptionContext } from './SubscriptionContext';
-import { buildSubscriptionFromContext } from './SubscriptionBuilder';
 import { ConstraintEnforcementService } from './constraints/ConstraintEnforcementService';
+import { handleDeny, applyDeny } from './enforcement-utils';
 
 @Aspect(POST_ENFORCE_SYMBOL)
 export class PostEnforceAspect implements LazyDecorator<any, EnforceOptions> {
@@ -25,7 +26,7 @@ export class PostEnforceAspect implements LazyDecorator<any, EnforceOptions> {
     return async (...args: any[]) => {
       const handlerResult = await method(...args);
 
-      const ctx = aspect.buildContext(methodName, className, args);
+      const ctx = buildContext(aspect.cls, methodName, className, args);
       ctx.returnValue = handlerResult;
 
       const subscription = buildSubscriptionFromContext(metadata, ctx);
@@ -39,7 +40,7 @@ export class PostEnforceAspect implements LazyDecorator<any, EnforceOptions> {
         return aspect.handlePermit(decision, metadata, ctx, handlerResult);
       }
 
-      return aspect.handleDeny(decision, metadata, ctx);
+      return handleDeny(aspect.logger, aspect.constraintService, decision, metadata, ctx);
     };
   }
 
@@ -54,57 +55,21 @@ export class PostEnforceAspect implements LazyDecorator<any, EnforceOptions> {
       bundle = this.constraintService.postEnforceBundleFor(decision);
     } catch (error) {
       this.logger.warn(`Obligation handling failed on PERMIT: ${error}`);
-      return this.deny(options, ctx, decision);
+      return applyDeny(options, ctx, decision);
     }
 
     try {
       bundle.handleOnDecisionConstraints();
       return bundle.handleAllOnNextConstraints(handlerResult);
     } catch (error) {
-      try { bundle.handleAllOnErrorConstraints(error instanceof Error ? error : new Error(String(error))); } catch { /* already denying */ }
+      try {
+        bundle.handleAllOnErrorConstraints(error instanceof Error ? error : new Error(String(error)));
+      } catch (handlerError) {
+        this.logger.warn(`Error handler failed while handling obligation failure: ${handlerError}`);
+      }
       this.logger.warn(`Obligation handling failed on PERMIT: ${error}`);
-      return this.deny(options, ctx, decision);
+      return applyDeny(options, ctx, decision);
     }
   }
 
-  private handleDeny(
-    decision: any,
-    options: EnforceOptions,
-    ctx: SubscriptionContext,
-  ): any {
-    if (decision.decision === 'INDETERMINATE') {
-      this.logger.error(`PDP returned INDETERMINATE -- PDP may be unreachable or misconfigured`);
-    } else {
-      this.logger.warn(`Access denied: ${decision.decision}`);
-    }
-
-    try {
-      const bundle = this.constraintService.bestEffortBundleFor(decision);
-      bundle.handleOnDecisionConstraints();
-    } catch (error) {
-      this.logger.warn(`Best-effort obligation handlers failed on ${decision.decision}: ${error}`);
-    }
-
-    return this.deny(options, ctx, decision);
-  }
-
-  private deny(options: EnforceOptions, ctx: SubscriptionContext, decision: any): any {
-    if (options.onDeny) {
-      return options.onDeny(ctx, decision);
-    }
-    throw new ForbiddenException('Access denied by policy');
-  }
-
-  private buildContext(methodName: string, className: string, args: any[]): SubscriptionContext {
-    const request = this.cls.get(CLS_REQ) ?? {};
-    return {
-      request,
-      params: request.params ?? {},
-      query: request.query ?? {},
-      body: request.body,
-      handler: methodName,
-      controller: className,
-      args,
-    };
-  }
 }

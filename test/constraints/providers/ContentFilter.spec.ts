@@ -322,6 +322,17 @@ describe('ContentFilter', () => {
         });
         expect(() => handler({ books: [] })).toThrow('Unsupported JSONPath: bracket notation');
       });
+
+      test.each([
+        '$.__proto__.polluted',
+        '$.constructor.polluted',
+        '$.prototype.polluted',
+      ])('whenPrototypePollutingPath %s thenThrowsUnsafePathError', (path) => {
+        const handler = getHandler({
+          actions: [{ type: 'delete', path }],
+        });
+        expect(() => handler({ safe: 'value' })).toThrow('Unsafe path segment');
+      });
     });
   });
 

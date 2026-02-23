@@ -42,8 +42,6 @@ export function createMockStreamingBundle(
 ): StreamingConstraintHandlerBundle {
   return {
     handleOnDecisionConstraints: jest.fn(),
-    handleOnSubscribeConstraints: jest.fn(),
-    handleOnRequestConstraints: jest.fn(),
     handleAllOnNextConstraints: jest.fn((v) => v),
     handleAllOnErrorConstraints: jest.fn((e) => e),
     handleOnCompleteConstraints: jest.fn(),

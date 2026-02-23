@@ -2,14 +2,12 @@ import { ForbiddenException, Injectable, Logger, OnModuleInit } from '@nestjs/co
 import { DiscoveryService } from '@nestjs/core';
 import { MethodInvocationContext } from '../MethodInvocationContext';
 import { SaplConstraintHandler, ConstraintHandlerType } from './SaplConstraintHandler';
-import { ConstraintHandlerBundle, NO_RESOURCE_REPLACEMENT } from './ConstraintHandlerBundle';
+import { ConstraintHandlerBundle } from './ConstraintHandlerBundle';
+import { StreamingConstraintHandlerBundle } from './StreamingConstraintHandlerBundle';
+import { AuthorizationDecision } from '../types';
 import {
-  StreamingConstraintHandlerBundle,
-  NO_RESOURCE_REPLACEMENT as STREAMING_NO_RESOURCE_REPLACEMENT,
-} from './StreamingConstraintHandlerBundle';
-import {
+  NO_RESOURCE_REPLACEMENT,
   Signal,
-  Responsible,
   RunnableConstraintHandlerProvider,
   ConsumerConstraintHandlerProvider,
   MappingConstraintHandlerProvider,
@@ -17,8 +15,6 @@ import {
   ErrorMappingConstraintHandlerProvider,
   FilterPredicateConstraintHandlerProvider,
   MethodInvocationConstraintHandlerProvider,
-  SubscriptionHandlerProvider,
-  RequestHandlerProvider,
 } from './api/index';
 
 type HandlerLists = {
@@ -29,8 +25,6 @@ type HandlerLists = {
   errorMapping: ErrorMappingConstraintHandlerProvider[];
   filterPredicate: FilterPredicateConstraintHandlerProvider[];
   methodInvocation: MethodInvocationConstraintHandlerProvider[];
-  subscription: SubscriptionHandlerProvider[];
-  request: RequestHandlerProvider[];
 };
 
 function runBoth(a: () => void, b: () => void): () => void {
@@ -70,20 +64,6 @@ function errorMapBoth(
   b: (e: Error) => Error,
 ): (e: Error) => Error {
   return (e) => b(a(e));
-}
-
-function composeSubscriptionHandlers(
-  a: (s: any) => void,
-  b: (s: any) => void,
-): (s: any) => void {
-  return (s) => { a(s); b(s); };
-}
-
-function composeRequestHandlers(
-  a: (c: number) => void,
-  b: (c: number) => void,
-): (c: number) => void {
-  return (c) => { a(c); b(c); };
 }
 
 function wrapObligation<A extends any[], R>(
@@ -138,6 +118,12 @@ function wrapAdvicePassthrough<V>(
   };
 }
 
+interface ProcessOptions {
+  signal?: Signal;
+  sortByPriority?: boolean;
+  adviceFallback?: unknown;
+}
+
 @Injectable()
 export class ConstraintEnforcementService implements OnModuleInit {
   private readonly logger = new Logger(ConstraintEnforcementService.name);
@@ -149,8 +135,6 @@ export class ConstraintEnforcementService implements OnModuleInit {
     errorMapping: [],
     filterPredicate: [],
     methodInvocation: [],
-    subscription: [],
-    request: [],
   };
 
   constructor(private readonly discovery: DiscoveryService) {}
@@ -179,28 +163,62 @@ export class ConstraintEnforcementService implements OnModuleInit {
     }
   }
 
-  preEnforceBundleFor(decision: any): ConstraintHandlerBundle {
+  preEnforceBundleFor(decision: AuthorizationDecision): ConstraintHandlerBundle {
     return this.buildBundle(decision, true, false);
   }
 
-  postEnforceBundleFor(decision: any): ConstraintHandlerBundle {
+  postEnforceBundleFor(decision: AuthorizationDecision): ConstraintHandlerBundle {
     return this.buildBundle(decision, false, false);
   }
 
-  bestEffortBundleFor(decision: any): ConstraintHandlerBundle {
+  bestEffortBundleFor(decision: AuthorizationDecision): ConstraintHandlerBundle {
     return this.buildBundle(decision, false, true);
   }
 
-  streamingBundleFor(decision: any): StreamingConstraintHandlerBundle {
+  streamingBundleFor(decision: AuthorizationDecision): StreamingConstraintHandlerBundle {
     return this.buildStreamingBundle(decision, false);
   }
 
-  streamingBestEffortBundleFor(decision: any): StreamingConstraintHandlerBundle {
+  streamingBestEffortBundleFor(decision: AuthorizationDecision): StreamingConstraintHandlerBundle {
     return this.buildStreamingBundle(decision, true);
   }
 
+  private processHandlers(
+    providers: any[],
+    constraint: unknown,
+    index: number,
+    unhandled: Set<number> | undefined,
+    isObligation: boolean,
+    compose: (handler: any) => void,
+    options?: ProcessOptions,
+  ): void {
+    let responsible = providers.filter((p) => p.isResponsible(constraint));
+
+    if (options?.signal !== undefined) {
+      responsible = responsible.filter((p) => p.getSignal() === options.signal);
+    }
+
+    if (options?.sortByPriority) {
+      responsible.sort((a, b) => b.getPriority() - a.getPriority());
+    }
+
+    for (const provider of responsible) {
+      unhandled?.delete(index);
+      const raw = provider.getHandler(constraint);
+      let wrapped;
+      if (isObligation) {
+        wrapped = wrapObligation(raw, constraint, this.logger);
+      } else if (options?.sortByPriority) {
+        wrapped = wrapAdvicePassthrough(raw, constraint, this.logger);
+      } else {
+        wrapped = wrapAdvice(raw, constraint, this.logger, options?.adviceFallback);
+      }
+      compose(wrapped);
+    }
+  }
+
   private buildBundle(
-    decision: any,
+    decision: AuthorizationDecision,
     includeMethodInvocation: boolean,
     bestEffort: boolean,
   ): ConstraintHandlerBundle {
@@ -217,41 +235,42 @@ export class ConstraintEnforcementService implements OnModuleInit {
     let mapError: (error: Error) => Error = (e) => e;
 
     const replaceResource = decision.resource !== undefined ? decision.resource : NO_RESOURCE_REPLACEMENT;
-
     const obligationIsStrict = !bestEffort;
 
-    for (let i = 0; i < obligations.length; i++) {
-      const constraint = obligations[i];
-
-      this.processRunnables(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
+    const processConstraint = (constraint: any, isObligation: boolean, unhandled: Set<number> | undefined, i: number) => {
+      this.processHandlers(this.handlers.runnable, constraint, i, unhandled, isObligation, (h) => {
         onDecision = runBoth(onDecision, h);
-      });
+      }, { signal: Signal.ON_DECISION });
 
       if (includeMethodInvocation) {
-        this.processMethodInvocation(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
-          methodInvocation = this.composeMethodInvocation(methodInvocation, h);
+        this.processHandlers(this.handlers.methodInvocation, constraint, i, unhandled, isObligation, (h) => {
+          methodInvocation = consumeWithBoth(methodInvocation, h);
         });
       }
 
-      this.processFilterPredicates(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
+      this.processHandlers(this.handlers.filterPredicate, constraint, i, unhandled, isObligation, (h) => {
         filterPredicate = filterBoth(filterPredicate, h);
-      });
+      }, { adviceFallback: true });
 
-      this.processConsumers(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
+      this.processHandlers(this.handlers.consumer, constraint, i, unhandled, isObligation, (h) => {
         doOnNext = consumeWithBoth(doOnNext, h);
       });
 
-      this.processMappings(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
+      this.processHandlers(this.handlers.mapping, constraint, i, unhandled, isObligation, (h) => {
         mapNext = mapBoth(mapNext, h);
-      });
+      }, { sortByPriority: true });
 
-      this.processErrorHandlers(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
+      this.processHandlers(this.handlers.errorHandler, constraint, i, unhandled, isObligation, (h) => {
         doOnError = errorConsumeBoth(doOnError, h);
       });
 
-      this.processErrorMappings(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
+      this.processHandlers(this.handlers.errorMapping, constraint, i, unhandled, isObligation, (h) => {
         mapError = errorMapBoth(mapError, h);
-      });
+      }, { sortByPriority: true });
+    };
+
+    for (let i = 0; i < obligations.length; i++) {
+      processConstraint(obligations[i], obligationIsStrict, unhandledObligations, i);
     }
 
     if (!bestEffort && unhandledObligations.size > 0) {
@@ -265,37 +284,7 @@ export class ConstraintEnforcementService implements OnModuleInit {
     }
 
     for (let i = 0; i < advice.length; i++) {
-      const constraint = advice[i];
-
-      this.processRunnables(constraint, false, undefined, i, (h) => {
-        onDecision = runBoth(onDecision, h);
-      });
-
-      if (includeMethodInvocation) {
-        this.processMethodInvocation(constraint, false, undefined, i, (h) => {
-          methodInvocation = this.composeMethodInvocation(methodInvocation, h);
-        });
-      }
-
-      this.processFilterPredicates(constraint, false, undefined, i, (h) => {
-        filterPredicate = filterBoth(filterPredicate, h);
-      });
-
-      this.processConsumers(constraint, false, undefined, i, (h) => {
-        doOnNext = consumeWithBoth(doOnNext, h);
-      });
-
-      this.processMappings(constraint, false, undefined, i, (h) => {
-        mapNext = mapBoth(mapNext, h);
-      });
-
-      this.processErrorHandlers(constraint, false, undefined, i, (h) => {
-        doOnError = errorConsumeBoth(doOnError, h);
-      });
-
-      this.processErrorMappings(constraint, false, undefined, i, (h) => {
-        mapError = errorMapBoth(mapError, h);
-      });
+      processConstraint(advice[i], false, undefined, i);
     }
 
     return new ConstraintHandlerBundle(
@@ -310,148 +299,8 @@ export class ConstraintEnforcementService implements OnModuleInit {
     );
   }
 
-  private processRunnables(
-    constraint: any,
-    isObligation: boolean,
-    unhandled: Set<number> | undefined,
-    index: number,
-    compose: (handler: () => void) => void,
-  ): void {
-    for (const provider of this.handlers.runnable) {
-      if (!provider.isResponsible(constraint)) continue;
-      if (provider.getSignal() !== Signal.ON_DECISION) continue;
-      unhandled?.delete(index);
-      const raw = provider.getHandler(constraint);
-      const wrapped = isObligation
-        ? wrapObligation(raw, constraint, this.logger)
-        : wrapAdvice(raw, constraint, this.logger, undefined as any);
-      compose(wrapped);
-    }
-  }
-
-  private processMethodInvocation(
-    constraint: any,
-    isObligation: boolean,
-    unhandled: Set<number> | undefined,
-    index: number,
-    compose: (handler: (context: MethodInvocationContext) => void) => void,
-  ): void {
-    for (const provider of this.handlers.methodInvocation) {
-      if (!provider.isResponsible(constraint)) continue;
-      unhandled?.delete(index);
-      const raw = provider.getHandler(constraint);
-      const wrapped = isObligation
-        ? wrapObligation(raw, constraint, this.logger)
-        : wrapAdvice(raw, constraint, this.logger, undefined as any);
-      compose(wrapped);
-    }
-  }
-
-  private processFilterPredicates(
-    constraint: any,
-    isObligation: boolean,
-    unhandled: Set<number> | undefined,
-    index: number,
-    compose: (handler: (element: any) => boolean) => void,
-  ): void {
-    for (const provider of this.handlers.filterPredicate) {
-      if (!provider.isResponsible(constraint)) continue;
-      unhandled?.delete(index);
-      const raw = provider.getHandler(constraint);
-      const wrapped = isObligation
-        ? wrapObligation(raw, constraint, this.logger)
-        : wrapAdvice(raw, constraint, this.logger, true);
-      compose(wrapped);
-    }
-  }
-
-  private processConsumers(
-    constraint: any,
-    isObligation: boolean,
-    unhandled: Set<number> | undefined,
-    index: number,
-    compose: (handler: (value: any) => void) => void,
-  ): void {
-    for (const provider of this.handlers.consumer) {
-      if (!provider.isResponsible(constraint)) continue;
-      unhandled?.delete(index);
-      const raw = provider.getHandler(constraint);
-      const wrapped = isObligation
-        ? wrapObligation(raw, constraint, this.logger)
-        : wrapAdvice(raw, constraint, this.logger, undefined as any);
-      compose(wrapped);
-    }
-  }
-
-  private processMappings(
-    constraint: any,
-    isObligation: boolean,
-    unhandled: Set<number> | undefined,
-    index: number,
-    compose: (handler: (value: any) => any) => void,
-  ): void {
-    const responsible = this.handlers.mapping
-      .filter((p) => p.isResponsible(constraint))
-      .sort((a, b) => b.getPriority() - a.getPriority());
-
-    for (const provider of responsible) {
-      unhandled?.delete(index);
-      const raw = provider.getHandler(constraint);
-      const wrapped = isObligation
-        ? wrapObligation(raw, constraint, this.logger)
-        : wrapAdvicePassthrough(raw, constraint, this.logger);
-      compose(wrapped);
-    }
-  }
-
-  private processErrorHandlers(
-    constraint: any,
-    isObligation: boolean,
-    unhandled: Set<number> | undefined,
-    index: number,
-    compose: (handler: (error: Error) => void) => void,
-  ): void {
-    for (const provider of this.handlers.errorHandler) {
-      if (!provider.isResponsible(constraint)) continue;
-      unhandled?.delete(index);
-      const raw = provider.getHandler(constraint);
-      const wrapped = isObligation
-        ? wrapObligation(raw, constraint, this.logger)
-        : wrapAdvice(raw, constraint, this.logger, undefined as any);
-      compose(wrapped);
-    }
-  }
-
-  private processErrorMappings(
-    constraint: any,
-    isObligation: boolean,
-    unhandled: Set<number> | undefined,
-    index: number,
-    compose: (handler: (error: Error) => Error) => void,
-  ): void {
-    const responsible = this.handlers.errorMapping
-      .filter((p) => p.isResponsible(constraint))
-      .sort((a, b) => b.getPriority() - a.getPriority());
-
-    for (const provider of responsible) {
-      unhandled?.delete(index);
-      const raw = provider.getHandler(constraint);
-      const wrapped = isObligation
-        ? wrapObligation(raw, constraint, this.logger)
-        : wrapAdvicePassthrough(raw, constraint, this.logger);
-      compose(wrapped);
-    }
-  }
-
-  private composeMethodInvocation(
-    a: (context: MethodInvocationContext) => void,
-    b: (context: MethodInvocationContext) => void,
-  ): (context: MethodInvocationContext) => void {
-    return (context) => { a(context); b(context); };
-  }
-
   private buildStreamingBundle(
-    decision: any,
+    decision: AuthorizationDecision,
     bestEffort: boolean,
   ): StreamingConstraintHandlerBundle {
     const obligations: any[] = decision.obligations ?? [];
@@ -461,53 +310,51 @@ export class ConstraintEnforcementService implements OnModuleInit {
     let onDecision: () => void = () => {};
     let onComplete: () => void = () => {};
     let onCancel: () => void = () => {};
-    let onSubscribe: (subscription: any) => void = () => {};
-    let onRequest: (count: number) => void = () => {};
     let filterPredicate: (element: any) => boolean = () => true;
     let doOnNext: (value: any) => void = () => {};
     let mapNext: (value: any) => any = (v) => v;
     let doOnError: (error: Error) => void = () => {};
     let mapError: (error: Error) => Error = (e) => e;
 
-    const replaceResource = decision.resource !== undefined ? decision.resource : STREAMING_NO_RESOURCE_REPLACEMENT;
-
+    const replaceResource = decision.resource !== undefined ? decision.resource : NO_RESOURCE_REPLACEMENT;
     const obligationIsStrict = !bestEffort;
 
-    for (let i = 0; i < obligations.length; i++) {
-      const constraint = obligations[i];
-
-      this.processRunnablesBySignal(constraint, obligationIsStrict, unhandledObligations, i, Signal.ON_DECISION, (h) => {
+    const processConstraint = (constraint: any, isObligation: boolean, unhandled: Set<number> | undefined, i: number) => {
+      this.processHandlers(this.handlers.runnable, constraint, i, unhandled, isObligation, (h) => {
         onDecision = runBoth(onDecision, h);
-      });
-      this.processRunnablesBySignal(constraint, obligationIsStrict, unhandledObligations, i, Signal.ON_COMPLETE, (h) => {
+      }, { signal: Signal.ON_DECISION });
+
+      this.processHandlers(this.handlers.runnable, constraint, i, unhandled, isObligation, (h) => {
         onComplete = runBoth(onComplete, h);
-      });
-      this.processRunnablesBySignal(constraint, obligationIsStrict, unhandledObligations, i, Signal.ON_CANCEL, (h) => {
+      }, { signal: Signal.ON_COMPLETE });
+
+      this.processHandlers(this.handlers.runnable, constraint, i, unhandled, isObligation, (h) => {
         onCancel = runBoth(onCancel, h);
-      });
+      }, { signal: Signal.ON_CANCEL });
 
-      this.processSubscriptionHandlers(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
-        onSubscribe = composeSubscriptionHandlers(onSubscribe, h);
-      });
-      this.processRequestHandlers(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
-        onRequest = composeRequestHandlers(onRequest, h);
-      });
-
-      this.processFilterPredicates(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
+      this.processHandlers(this.handlers.filterPredicate, constraint, i, unhandled, isObligation, (h) => {
         filterPredicate = filterBoth(filterPredicate, h);
-      });
-      this.processConsumers(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
+      }, { adviceFallback: true });
+
+      this.processHandlers(this.handlers.consumer, constraint, i, unhandled, isObligation, (h) => {
         doOnNext = consumeWithBoth(doOnNext, h);
       });
-      this.processMappings(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
+
+      this.processHandlers(this.handlers.mapping, constraint, i, unhandled, isObligation, (h) => {
         mapNext = mapBoth(mapNext, h);
-      });
-      this.processErrorHandlers(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
+      }, { sortByPriority: true });
+
+      this.processHandlers(this.handlers.errorHandler, constraint, i, unhandled, isObligation, (h) => {
         doOnError = errorConsumeBoth(doOnError, h);
       });
-      this.processErrorMappings(constraint, obligationIsStrict, unhandledObligations, i, (h) => {
+
+      this.processHandlers(this.handlers.errorMapping, constraint, i, unhandled, isObligation, (h) => {
         mapError = errorMapBoth(mapError, h);
-      });
+      }, { sortByPriority: true });
+    };
+
+    for (let i = 0; i < obligations.length; i++) {
+      processConstraint(obligations[i], obligationIsStrict, unhandledObligations, i);
     }
 
     if (!bestEffort && unhandledObligations.size > 0) {
@@ -521,46 +368,11 @@ export class ConstraintEnforcementService implements OnModuleInit {
     }
 
     for (let i = 0; i < advice.length; i++) {
-      const constraint = advice[i];
-
-      this.processRunnablesBySignal(constraint, false, undefined, i, Signal.ON_DECISION, (h) => {
-        onDecision = runBoth(onDecision, h);
-      });
-      this.processRunnablesBySignal(constraint, false, undefined, i, Signal.ON_COMPLETE, (h) => {
-        onComplete = runBoth(onComplete, h);
-      });
-      this.processRunnablesBySignal(constraint, false, undefined, i, Signal.ON_CANCEL, (h) => {
-        onCancel = runBoth(onCancel, h);
-      });
-
-      this.processSubscriptionHandlers(constraint, false, undefined, i, (h) => {
-        onSubscribe = composeSubscriptionHandlers(onSubscribe, h);
-      });
-      this.processRequestHandlers(constraint, false, undefined, i, (h) => {
-        onRequest = composeRequestHandlers(onRequest, h);
-      });
-
-      this.processFilterPredicates(constraint, false, undefined, i, (h) => {
-        filterPredicate = filterBoth(filterPredicate, h);
-      });
-      this.processConsumers(constraint, false, undefined, i, (h) => {
-        doOnNext = consumeWithBoth(doOnNext, h);
-      });
-      this.processMappings(constraint, false, undefined, i, (h) => {
-        mapNext = mapBoth(mapNext, h);
-      });
-      this.processErrorHandlers(constraint, false, undefined, i, (h) => {
-        doOnError = errorConsumeBoth(doOnError, h);
-      });
-      this.processErrorMappings(constraint, false, undefined, i, (h) => {
-        mapError = errorMapBoth(mapError, h);
-      });
+      processConstraint(advice[i], false, undefined, i);
     }
 
     return new StreamingConstraintHandlerBundle(
       onDecision,
-      onSubscribe,
-      onRequest,
       replaceResource,
       filterPredicate,
       doOnNext,
@@ -572,59 +384,4 @@ export class ConstraintEnforcementService implements OnModuleInit {
     );
   }
 
-  private processRunnablesBySignal(
-    constraint: any,
-    isObligation: boolean,
-    unhandled: Set<number> | undefined,
-    index: number,
-    signal: Signal,
-    compose: (handler: () => void) => void,
-  ): void {
-    for (const provider of this.handlers.runnable) {
-      if (!provider.isResponsible(constraint)) continue;
-      if (provider.getSignal() !== signal) continue;
-      unhandled?.delete(index);
-      const raw = provider.getHandler(constraint);
-      const wrapped = isObligation
-        ? wrapObligation(raw, constraint, this.logger)
-        : wrapAdvice(raw, constraint, this.logger, undefined as any);
-      compose(wrapped);
-    }
-  }
-
-  private processSubscriptionHandlers(
-    constraint: any,
-    isObligation: boolean,
-    unhandled: Set<number> | undefined,
-    index: number,
-    compose: (handler: (subscription: any) => void) => void,
-  ): void {
-    for (const provider of this.handlers.subscription) {
-      if (!provider.isResponsible(constraint)) continue;
-      unhandled?.delete(index);
-      const raw = provider.getHandler(constraint);
-      const wrapped = isObligation
-        ? wrapObligation(raw, constraint, this.logger)
-        : wrapAdvice(raw, constraint, this.logger, undefined as any);
-      compose(wrapped);
-    }
-  }
-
-  private processRequestHandlers(
-    constraint: any,
-    isObligation: boolean,
-    unhandled: Set<number> | undefined,
-    index: number,
-    compose: (handler: (count: number) => void) => void,
-  ): void {
-    for (const provider of this.handlers.request) {
-      if (!provider.isResponsible(constraint)) continue;
-      unhandled?.delete(index);
-      const raw = provider.getHandler(constraint);
-      const wrapped = isObligation
-        ? wrapObligation(raw, constraint, this.logger)
-        : wrapAdvice(raw, constraint, this.logger, undefined as any);
-      compose(wrapped);
-    }
-  }
 }

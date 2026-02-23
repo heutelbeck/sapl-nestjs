@@ -1,11 +1,10 @@
 // Module
 export { SaplModule } from './sapl.module';
 export { SAPL_MODULE_OPTIONS } from './sapl.constants';
-export {
-  SaplModuleOptions,
-  SaplModuleAsyncOptions,
-  SaplOptionsFactory,
-} from './sapl.interfaces';
+export { SaplModuleOptions, SaplModuleAsyncOptions } from './sapl.interfaces';
+
+// Types
+export { AuthorizationDecision, AuthorizationSubscription } from './types';
 
 // PDP
 export { PdpService } from './pdp.service';
@@ -36,6 +35,7 @@ export { MethodInvocationContext } from './MethodInvocationContext';
 
 // Constraint handler API
 export {
+  NO_RESOURCE_REPLACEMENT,
   Signal,
   Responsible,
   RunnableConstraintHandlerProvider,
@@ -45,8 +45,6 @@ export {
   ErrorMappingConstraintHandlerProvider,
   FilterPredicateConstraintHandlerProvider,
   MethodInvocationConstraintHandlerProvider,
-  SubscriptionHandlerProvider,
-  RequestHandlerProvider,
 } from './constraints/api/index';
 
 // Constraint handler registration

@@ -7,9 +7,7 @@ export type ConstraintHandlerType =
   | 'errorHandler'
   | 'errorMapping'
   | 'filterPredicate'
-  | 'methodInvocation'
-  | 'subscription'
-  | 'request';
+  | 'methodInvocation';
 
 export const SaplConstraintHandler =
   DiscoveryService.createDecorator<ConstraintHandlerType>();

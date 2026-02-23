@@ -1,6 +1,33 @@
 import { MethodInvocationContext } from '../MethodInvocationContext';
+import { NO_RESOURCE_REPLACEMENT } from './api/index';
 
-export const NO_RESOURCE_REPLACEMENT = Symbol('NO_RESOURCE_REPLACEMENT');
+export function applyNextConstraints(
+  value: any,
+  replaceResource: any,
+  filterPredicate: (element: any) => boolean,
+  doOnNext: (value: any) => void,
+  mapNext: (value: any) => any,
+): any {
+  let current = replaceResource !== NO_RESOURCE_REPLACEMENT ? replaceResource : value;
+
+  if (Array.isArray(current)) {
+    current = current.filter(filterPredicate);
+  } else if (current != null && !filterPredicate(current)) {
+    current = null;
+  }
+
+  doOnNext(current);
+  return mapNext(current);
+}
+
+export function applyErrorConstraints(
+  error: Error,
+  doOnError: (error: Error) => void,
+  mapError: (error: Error) => Error,
+): Error {
+  doOnError(error);
+  return mapError(error);
+}
 
 export class ConstraintHandlerBundle {
   constructor(
@@ -23,20 +50,16 @@ export class ConstraintHandlerBundle {
   }
 
   handleAllOnNextConstraints(value: any): any {
-    let current = this.replaceResource !== NO_RESOURCE_REPLACEMENT ? this.replaceResource : value;
-
-    if (Array.isArray(current)) {
-      current = current.filter(this.filterPredicateHandler);
-    } else if (current !== null && !this.filterPredicateHandler(current)) {
-      current = null;
-    }
-
-    this.doOnNextHandler(current);
-    return this.mapNextHandler(current);
+    return applyNextConstraints(
+      value,
+      this.replaceResource,
+      this.filterPredicateHandler,
+      this.doOnNextHandler,
+      this.mapNextHandler,
+    );
   }
 
   handleAllOnErrorConstraints(error: Error): Error {
-    this.doOnErrorHandler(error);
-    return this.mapErrorHandler(error);
+    return applyErrorConstraints(error, this.doOnErrorHandler, this.mapErrorHandler);
   }
 }

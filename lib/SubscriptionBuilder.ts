@@ -1,5 +1,7 @@
+import { ClsService, CLS_REQ } from 'nestjs-cls';
 import { SubscriptionContext } from './SubscriptionContext';
 import { SubscriptionOptions, SubscriptionField } from './EnforceOptions';
+import { AuthorizationSubscription } from './types';
 
 /**
  * Resolve a SubscriptionField: if it's a function, call it with the context.
@@ -53,6 +55,27 @@ function defaultEnvironment(ctx: SubscriptionContext): any {
 }
 
 /**
+ * Build a SubscriptionContext from the current CLS request and method metadata.
+ */
+export function buildContext(
+  cls: ClsService,
+  methodName: string,
+  className: string,
+  args: any[],
+): SubscriptionContext {
+  const request = cls.get(CLS_REQ) ?? {};
+  return {
+    request,
+    params: request.params ?? {},
+    query: request.query ?? {},
+    body: request.body,
+    handler: methodName,
+    controller: className,
+    args,
+  };
+}
+
+/**
  * Build a complete SAPL authorization subscription from SubscriptionOptions
  * and a pre-built SubscriptionContext.
  *
@@ -62,14 +85,14 @@ function defaultEnvironment(ctx: SubscriptionContext): any {
 export function buildSubscriptionFromContext(
   options: SubscriptionOptions,
   ctx: SubscriptionContext,
-): Record<string, any> {
+): AuthorizationSubscription {
   const subject     = options.subject     !== undefined ? resolve(options.subject, ctx)     : defaultSubject(ctx);
   const action      = options.action      !== undefined ? resolve(options.action, ctx)      : defaultAction(ctx);
   const resource    = options.resource    !== undefined ? resolve(options.resource, ctx)    : defaultResource(ctx);
   const environment = options.environment !== undefined ? resolve(options.environment, ctx) : defaultEnvironment(ctx);
   const secrets     = options.secrets     !== undefined ? resolve(options.secrets, ctx)     : undefined;
 
-  const subscription: Record<string, any> = { subject, action, resource, environment };
+  const subscription: AuthorizationSubscription = { subject, action, resource, environment };
   if (secrets !== undefined) {
     subscription.secrets = secrets;
   }

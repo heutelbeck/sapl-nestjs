@@ -1,3 +1,5 @@
+export const NO_RESOURCE_REPLACEMENT = Symbol('NO_RESOURCE_REPLACEMENT');
+
 export enum Signal {
   ON_DECISION = 'ON_DECISION',
   ON_COMPLETE = 'ON_COMPLETE',
@@ -39,12 +41,4 @@ import { MethodInvocationContext } from '../../MethodInvocationContext';
 
 export interface MethodInvocationConstraintHandlerProvider extends Responsible {
   getHandler(constraint: any): (context: MethodInvocationContext) => void;
-}
-
-export interface SubscriptionHandlerProvider extends Responsible {
-  getHandler(constraint: any): (subscription: any) => void;
-}
-
-export interface RequestHandlerProvider extends Responsible {
-  getHandler(constraint: any): (count: number) => void;
 }

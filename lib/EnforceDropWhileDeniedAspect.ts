@@ -1,12 +1,12 @@
 import { Logger } from '@nestjs/common';
 import { Aspect, LazyDecorator, WrapParams } from '@toss/nestjs-aop';
-import { ClsService, CLS_REQ } from 'nestjs-cls';
+import { ClsService } from 'nestjs-cls';
 import { Observable, Subscription } from 'rxjs';
 import { ENFORCE_DROP_WHILE_DENIED_SYMBOL } from './EnforceDropWhileDenied';
 import { EnforceDropWhileDeniedOptions } from './StreamingEnforceOptions';
 import { PdpService } from './pdp.service';
 import { SubscriptionContext } from './SubscriptionContext';
-import { buildSubscriptionFromContext } from './SubscriptionBuilder';
+import { buildContext, buildSubscriptionFromContext } from './SubscriptionBuilder';
 import { ConstraintEnforcementService } from './constraints/ConstraintEnforcementService';
 import { StreamingConstraintHandlerBundle } from './constraints/StreamingConstraintHandlerBundle';
 
@@ -32,7 +32,7 @@ export class EnforceDropWhileDeniedAspect implements LazyDecorator<any, EnforceD
         let sourceSubscription: Subscription | null = null;
         let permitted = false;
 
-        const ctx = aspect.buildContext(methodName, className, args);
+        const ctx = buildContext(aspect.cls, methodName, className, args);
         const subscription = buildSubscriptionFromContext(metadata, ctx);
         const decisions$ = aspect.pdpService.decide(subscription);
 
@@ -52,7 +52,7 @@ export class EnforceDropWhileDeniedAspect implements LazyDecorator<any, EnforceD
 
               if (!sourceSubscription) {
                 sourceSubscription = source$.subscribe({
-                  next: (value) => {
+                  next: (value: any) => {
                     if (!permitted || !currentBundle) return;
                     try {
                       const transformed = currentBundle.handleAllOnNextConstraints(value);
@@ -61,7 +61,7 @@ export class EnforceDropWhileDeniedAspect implements LazyDecorator<any, EnforceD
                       aspect.logger.warn(`Constraint handling failed on next: ${error}`);
                     }
                   },
-                  error: (err) => subscriber.error(err),
+                  error: (err: any) => subscriber.error(err),
                   complete: () => {
                     currentBundle?.handleOnCompleteConstraints();
                     subscriber.complete();
@@ -90,16 +90,4 @@ export class EnforceDropWhileDeniedAspect implements LazyDecorator<any, EnforceD
     };
   }
 
-  private buildContext(methodName: string, className: string, args: any[]): SubscriptionContext {
-    const request = this.cls.get(CLS_REQ) ?? {};
-    return {
-      request,
-      params: request.params ?? {},
-      query: request.query ?? {},
-      body: request.body,
-      handler: methodName,
-      controller: className,
-      args,
-    };
-  }
 }

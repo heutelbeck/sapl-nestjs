@@ -1,4 +1,5 @@
-import { ConstraintHandlerBundle, NO_RESOURCE_REPLACEMENT } from '../../lib/constraints/ConstraintHandlerBundle';
+import { ConstraintHandlerBundle } from '../../lib/constraints/ConstraintHandlerBundle';
+import { NO_RESOURCE_REPLACEMENT } from '../../lib/constraints/api/index';
 import { MethodInvocationContext } from '../../lib/MethodInvocationContext';
 
 function noop() {}
@@ -138,9 +139,9 @@ describe('ConstraintHandlerBundle', () => {
       expect(filterCalled.value).toBe(false);
     });
 
-    test('whenUndefinedInputThenFilterCalledAndReturnsNull', () => {
+    test('whenUndefinedInputThenFilterSkippedAndReturnsUndefined', () => {
       const bundle = createBundle({ filterPredicate: () => false });
-      expect(bundle.handleAllOnNextConstraints(undefined)).toBeNull();
+      expect(bundle.handleAllOnNextConstraints(undefined)).toBeUndefined();
     });
 
     test('whenUndefinedInputAndFilterPassesThenDoOnNextAndMapNextRun', () => {

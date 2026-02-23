@@ -1,8 +1,9 @@
 import { Subscriber } from 'rxjs';
 import { SubscriptionOptions } from './EnforceOptions';
+import { AuthorizationDecision } from './types';
 
-export type OnStreamDenyHandler = (decision: any, subscriber: Subscriber<any>) => void;
-export type OnStreamRecoverHandler = (decision: any, subscriber: Subscriber<any>) => void;
+export type OnStreamDenyHandler = (decision: AuthorizationDecision, subscriber: Subscriber<any>) => void;
+export type OnStreamRecoverHandler = (decision: AuthorizationDecision, subscriber: Subscriber<any>) => void;
 
 export interface EnforceTillDeniedOptions extends SubscriptionOptions {
   onStreamDeny?: OnStreamDenyHandler;

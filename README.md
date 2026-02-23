@@ -222,8 +222,6 @@ When the PDP returns a decision with `obligations` or `advice`, the `ConstraintE
 | `filterPredicate`  | `FilterPredicateConstraintHandlerProvider`  | `(element: any) => boolean`                  | After method, filters elements      |
 | `errorHandler`     | `ErrorHandlerProvider`                      | `(error: Error) => void`                     | On error, inspects                  |
 | `errorMapping`     | `ErrorMappingConstraintHandlerProvider`     | `(error: Error) => Error`                    | On error, transforms                |
-| `subscription`     | `SubscriptionHandlerProvider`              | `(subscription: any) => void`                | On subscribe (streaming only)       |
-| `request`          | `RequestHandlerProvider`                   | `(count: number) => void`                    | On request (streaming only)         |
 
 `MappingConstraintHandlerProvider` and `ErrorMappingConstraintHandlerProvider` also require `getPriority(): number`. When multiple mapping handlers match the same constraint, they execute in descending priority order (higher number runs first).
 
@@ -399,7 +397,7 @@ export class HeartbeatService {
 
 ### @EnforceRecoverableIfDenied
 
-In-band deny/recover signals via subscriber callbacks. Edge-triggered: `onStreamDeny` fires only on PERMIT-to-DENY transition, `onStreamRecover` fires only on DENY-to-PERMIT transition. Repeated same-state decisions do not re-fire callbacks.
+In-band deny/recover signals via subscriber callbacks. Edge-triggered: `onStreamDeny` fires on PERMIT-to-DENY transitions and on the initial decision if it is DENY. `onStreamRecover` fires on DENY-to-PERMIT transitions (not on the initial PERMIT). Repeated same-state decisions do not re-fire callbacks.
 
 ```typescript
 @Injectable()
@@ -426,6 +424,7 @@ export class HeartbeatService {
 
 All three streaming aspects:
 - Subscribe to `PdpService.decide()` which opens a streaming connection to the PDP
+- Identical consecutive decisions are deduplicated (`distinctUntilChanged` by deep equality) -- the PDP may resend the same decision periodically, and only actual changes trigger processing
 - On each PERMIT decision, build a `StreamingConstraintHandlerBundle` that applies constraint handlers to each data element
 - Hot-swap the constraint handler bundle when a new PERMIT decision arrives with different obligations
 - Run best-effort constraint handlers on DENY decisions
@@ -469,7 +468,9 @@ export class AppController {
 
 ## Advanced Configuration
 
-### Using nestjs-cls in Your Application
+### Using nestjs-cls (Continuation-Local Storage) in Your Application
+
+CLS (Continuation-Local Storage) provides per-request context that follows the async call chain -- similar to thread-local storage in Java. `@sapl/nestjs` uses it internally to pass the HTTP request object from the middleware layer into the AOP aspects without requiring explicit parameter passing.
 
 `SaplModule` manages `ClsModule` from `nestjs-cls` automatically. CLS middleware is mounted globally and the HTTP request is stored at the `CLS_REQ` key.
 

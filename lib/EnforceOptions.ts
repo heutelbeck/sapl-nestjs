@@ -1,4 +1,5 @@
 import { SubscriptionContext } from './SubscriptionContext';
+import { AuthorizationDecision } from './types';
 
 /**
  * A subscription field value: either a literal (sent as-is to the PDP) or a
@@ -17,7 +18,7 @@ export type SubscriptionField<T = any> = T | ((ctx: SubscriptionContext) => T);
  * and the PDP decision. The return value becomes the HTTP response body (with 200).
  * If not provided, a ForbiddenException (403) is thrown.
  */
-export type OnDenyHandler = (ctx: SubscriptionContext, decision: any) => any;
+export type OnDenyHandler = (ctx: SubscriptionContext, decision: AuthorizationDecision) => any;
 
 /**
  * The five SAPL authorization subscription fields.

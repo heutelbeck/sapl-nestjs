@@ -1,12 +1,12 @@
 import { Logger } from '@nestjs/common';
 import { Aspect, LazyDecorator, WrapParams } from '@toss/nestjs-aop';
-import { ClsService, CLS_REQ } from 'nestjs-cls';
+import { ClsService } from 'nestjs-cls';
 import { Observable, Subscription } from 'rxjs';
 import { ENFORCE_RECOVERABLE_SYMBOL } from './EnforceRecoverableIfDenied';
 import { EnforceRecoverableOptions } from './StreamingEnforceOptions';
 import { PdpService } from './pdp.service';
 import { SubscriptionContext } from './SubscriptionContext';
-import { buildSubscriptionFromContext } from './SubscriptionBuilder';
+import { buildContext, buildSubscriptionFromContext } from './SubscriptionBuilder';
 import { ConstraintEnforcementService } from './constraints/ConstraintEnforcementService';
 import { StreamingConstraintHandlerBundle } from './constraints/StreamingConstraintHandlerBundle';
 
@@ -30,44 +30,39 @@ export class EnforceRecoverableIfDeniedAspect implements LazyDecorator<any, Enfo
       return new Observable((subscriber) => {
         let currentBundle: StreamingConstraintHandlerBundle | null = null;
         let sourceSubscription: Subscription | null = null;
-        let permitted = false;
-        let wasPermitted = false;
-        let isFirstDecision = true;
+        let accessState: 'initial' | 'permitted' | 'denied' = 'initial';
 
-        const ctx = aspect.buildContext(methodName, className, args);
+        const ctx = buildContext(aspect.cls, methodName, className, args);
         const subscription = buildSubscriptionFromContext(metadata, ctx);
         const decisions$ = aspect.pdpService.decide(subscription);
 
         const decisionSub = decisions$.subscribe({
           next: (decision) => {
+            const previousState = accessState;
+
             if (decision.decision === 'PERMIT') {
               try {
                 currentBundle = aspect.constraintService.streamingBundleFor(decision);
                 currentBundle.handleOnDecisionConstraints();
               } catch (error) {
                 aspect.logger.warn(`Obligation handling failed: ${error}`);
-                permitted = false;
+                accessState = 'denied';
                 currentBundle = null;
-                if (wasPermitted || isFirstDecision) {
-                  wasPermitted = false;
+                if (previousState !== 'denied') {
                   metadata.onStreamDeny?.(decision, subscriber);
                 }
-                isFirstDecision = false;
                 return;
               }
-              permitted = true;
+              accessState = 'permitted';
 
-              if (!wasPermitted) {
-                wasPermitted = true;
-                if (!isFirstDecision) {
-                  metadata.onStreamRecover?.(decision, subscriber);
-                }
+              if (previousState === 'denied') {
+                metadata.onStreamRecover?.(decision, subscriber);
               }
 
               if (!sourceSubscription) {
                 sourceSubscription = source$.subscribe({
-                  next: (value) => {
-                    if (!permitted || !currentBundle) return;
+                  next: (value: any) => {
+                    if (accessState !== 'permitted' || !currentBundle) return;
                     try {
                       const transformed = currentBundle.handleAllOnNextConstraints(value);
                       subscriber.next(transformed);
@@ -75,7 +70,7 @@ export class EnforceRecoverableIfDeniedAspect implements LazyDecorator<any, Enfo
                       aspect.logger.warn(`Constraint handling failed on next: ${error}`);
                     }
                   },
-                  error: (err) => subscriber.error(err),
+                  error: (err: any) => subscriber.error(err),
                   complete: () => {
                     currentBundle?.handleOnCompleteConstraints();
                     subscriber.complete();
@@ -83,7 +78,7 @@ export class EnforceRecoverableIfDeniedAspect implements LazyDecorator<any, Enfo
                 });
               }
             } else {
-              permitted = false;
+              accessState = 'denied';
               try {
                 const bestEffort = aspect.constraintService.streamingBestEffortBundleFor(decision);
                 bestEffort.handleOnDecisionConstraints();
@@ -91,12 +86,10 @@ export class EnforceRecoverableIfDeniedAspect implements LazyDecorator<any, Enfo
                 /* best effort */
               }
 
-              if (wasPermitted || isFirstDecision) {
-                wasPermitted = false;
+              if (previousState !== 'denied') {
                 metadata.onStreamDeny?.(decision, subscriber);
               }
             }
-            isFirstDecision = false;
           },
           error: (err) => subscriber.error(err),
         });
@@ -110,16 +103,4 @@ export class EnforceRecoverableIfDeniedAspect implements LazyDecorator<any, Enfo
     };
   }
 
-  private buildContext(methodName: string, className: string, args: any[]): SubscriptionContext {
-    const request = this.cls.get(CLS_REQ) ?? {};
-    return {
-      request,
-      params: request.params ?? {},
-      query: request.query ?? {},
-      body: request.body,
-      handler: methodName,
-      controller: className,
-      args,
-    };
-  }
 }
