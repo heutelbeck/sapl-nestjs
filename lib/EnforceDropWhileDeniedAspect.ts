@@ -71,6 +71,7 @@ export class EnforceDropWhileDeniedAspect implements LazyDecorator<any, EnforceD
               }
             } else {
               permitted = false;
+              currentBundle = null;
               try {
                 const bestEffort = aspect.constraintService.streamingBestEffortBundleFor(decision);
                 bestEffort.handleOnDecisionConstraints();

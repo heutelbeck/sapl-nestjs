@@ -148,6 +148,9 @@ function applyAction(obj: any, action: any): void {
       }
       const discloseLeft = action.discloseLeft ?? 0;
       const discloseRight = action.discloseRight ?? 0;
+      if (typeof discloseLeft !== 'number' || typeof discloseRight !== 'number') {
+        throw new Error("'discloseLeft' and 'discloseRight' of 'blacken' action must be numbers.");
+      }
       const blackenLength = action.length;
       if (blackenLength !== undefined && (typeof blackenLength !== 'number' || blackenLength < 0)) {
         throw new Error("'length' of 'blacken' action is not a valid non-negative number.");
@@ -161,14 +164,18 @@ function applyAction(obj: any, action: any): void {
   }
 }
 
+const compiledRegexCache = new Map<string, RegExp>();
+
 function precompileConditions(conditions: any[]): void {
   for (const condition of conditions) {
     if (condition.type === '=~') {
       const pattern = String(condition.value);
-      if (!safe(pattern)) {
-        throw new Error(`Unsafe regex pattern rejected (potential ReDoS): '${pattern}'.`);
+      if (!compiledRegexCache.has(pattern)) {
+        if (!safe(pattern)) {
+          throw new Error(`Unsafe regex pattern rejected (potential ReDoS): '${pattern}'.`);
+        }
+        compiledRegexCache.set(pattern, new RegExp(pattern));
       }
-      condition._compiledRegex = new RegExp(pattern);
     }
   }
 }
@@ -193,7 +200,7 @@ function evaluateCondition(element: any, condition: any): boolean {
     case '<':
       return actual < expected;
     case '=~':
-      return typeof actual === 'string' && condition._compiledRegex.test(actual);
+      return typeof actual === 'string' && compiledRegexCache.get(String(condition.value))!.test(actual);
     default:
       throw new Error(`Not a valid predicate condition type: '${operator}'.`);
   }

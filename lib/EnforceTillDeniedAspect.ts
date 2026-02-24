@@ -29,6 +29,7 @@ export class EnforceTillDeniedAspect implements LazyDecorator<any, EnforceTillDe
         let currentBundle: StreamingConstraintHandlerBundle | null = null;
         let sourceSubscription: Subscription | null = null;
         let permitted = false;
+        const emitter = { next: (v: any) => subscriber.next(v) };
 
         const ctx = buildContext(aspect.cls, methodName, className, args);
         const subscription = buildSubscriptionFromContext(metadata, ctx);
@@ -44,7 +45,7 @@ export class EnforceTillDeniedAspect implements LazyDecorator<any, EnforceTillDe
               } catch (error) {
                 aspect.logger.warn(`Obligation handling failed: ${error}`);
                 try {
-                  metadata.onStreamDeny?.(decision, subscriber);
+                  metadata.onStreamDeny?.(decision, emitter);
                 } catch (callbackError) {
                   aspect.logger.warn(`onStreamDeny callback failed: ${callbackError}`);
                 }
@@ -81,7 +82,7 @@ export class EnforceTillDeniedAspect implements LazyDecorator<any, EnforceTillDe
                 /* best effort */
               }
               try {
-                metadata.onStreamDeny?.(decision, subscriber);
+                metadata.onStreamDeny?.(decision, emitter);
               } catch (callbackError) {
                 aspect.logger.warn(`onStreamDeny callback failed: ${callbackError}`);
               }

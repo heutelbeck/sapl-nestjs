@@ -24,6 +24,7 @@ export {
   OnDenyHandler,
 } from './EnforceOptions';
 export {
+  StreamEventEmitter,
   EnforceTillDeniedOptions,
   EnforceDropWhileDeniedOptions,
   EnforceRecoverableOptions,

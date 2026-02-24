@@ -1,9 +1,17 @@
-import { Subscriber } from 'rxjs';
 import { SubscriptionOptions } from './EnforceOptions';
 import { AuthorizationDecision } from './types';
 
-export type OnStreamDenyHandler = (decision: AuthorizationDecision, subscriber: Subscriber<any>) => void;
-export type OnStreamRecoverHandler = (decision: AuthorizationDecision, subscriber: Subscriber<any>) => void;
+/**
+ * Restricted emitter passed to streaming callbacks. Only exposes `.next()` to
+ * prevent user code from interfering with the stream lifecycle (error/complete)
+ * which is managed by the enforcement aspect.
+ */
+export interface StreamEventEmitter {
+  next(value: any): void;
+}
+
+export type OnStreamDenyHandler = (decision: AuthorizationDecision, emitter: StreamEventEmitter) => void;
+export type OnStreamRecoverHandler = (decision: AuthorizationDecision, emitter: StreamEventEmitter) => void;
 
 export interface EnforceTillDeniedOptions extends SubscriptionOptions {
   onStreamDeny?: OnStreamDenyHandler;

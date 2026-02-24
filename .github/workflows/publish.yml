@@ -5,8 +5,31 @@ on:
     types: [published]
 
 jobs:
-  publish:
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -19,12 +42,21 @@ jobs:
 
       - run: npm ci
       - run: npm run build
-      - run: npm test
 
-      # TODO: Enable when ready to publish. Investigate OIDC trusted publishing
-      # (available since July 2025) to avoid long-lived npm tokens.
+      - name: Verify version matches release tag
+        run: |
+          PKG_VERSION="v$(node -p "require('./package.json').version")"
+          if [ "$PKG_VERSION" != "${{ github.event.release.tag_name }}" ]; then
+            echo "::error::package.json version ($PKG_VERSION) does not match release tag (${{ github.event.release.tag_name }})"
+            exit 1
+          fi
+
+      # TODO: Activate when ready to publish.
+      # 1. Create a granular access token on npmjs.com for the @sapl scope
+      # 2. Add it as NPM_TOKEN in the repository secrets
+      # 3. Remove the 'if: false' line below
       - name: Publish to npm
         if: false
-        run: npm publish
+        run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

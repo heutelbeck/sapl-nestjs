@@ -29,6 +29,7 @@ export class EnforceRecoverableIfDeniedAspect implements LazyDecorator<any, Enfo
         let currentBundle: StreamingConstraintHandlerBundle | null = null;
         let sourceSubscription: Subscription | null = null;
         let accessState: 'initial' | 'permitted' | 'denied' = 'initial';
+        const emitter = { next: (v: any) => subscriber.next(v) };
 
         const ctx = buildContext(aspect.cls, methodName, className, args);
         const subscription = buildSubscriptionFromContext(metadata, ctx);
@@ -49,7 +50,7 @@ export class EnforceRecoverableIfDeniedAspect implements LazyDecorator<any, Enfo
                 currentBundle = null;
                 if (previousState !== 'denied') {
                   try {
-                    metadata.onStreamDeny?.(decision, subscriber);
+                    metadata.onStreamDeny?.(decision, emitter);
                   } catch (callbackError) {
                     aspect.logger.warn(`onStreamDeny callback failed: ${callbackError}`);
                   }
@@ -60,7 +61,7 @@ export class EnforceRecoverableIfDeniedAspect implements LazyDecorator<any, Enfo
 
               if (previousState === 'denied') {
                 try {
-                  metadata.onStreamRecover?.(decision, subscriber);
+                  metadata.onStreamRecover?.(decision, emitter);
                 } catch (callbackError) {
                   aspect.logger.warn(`onStreamRecover callback failed: ${callbackError}`);
                 }
@@ -88,6 +89,7 @@ export class EnforceRecoverableIfDeniedAspect implements LazyDecorator<any, Enfo
               }
             } else {
               accessState = 'denied';
+              currentBundle = null;
               try {
                 const bestEffort = aspect.constraintService.streamingBestEffortBundleFor(decision);
                 bestEffort.handleOnDecisionConstraints();
@@ -97,7 +99,7 @@ export class EnforceRecoverableIfDeniedAspect implements LazyDecorator<any, Enfo
 
               if (previousState !== 'denied') {
                 try {
-                  metadata.onStreamDeny?.(decision, subscriber);
+                  metadata.onStreamDeny?.(decision, emitter);
                 } catch (callbackError) {
                   aspect.logger.warn(`onStreamDeny callback failed: ${callbackError}`);
                 }

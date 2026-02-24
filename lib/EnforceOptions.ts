@@ -17,6 +17,10 @@ export type SubscriptionField<T = any> = T | ((ctx: SubscriptionContext) => T);
  * Callback invoked when the PDP denies access. Receives the request-time context
  * and the PDP decision. The return value becomes the HTTP response body (with 200).
  * If not provided, a ForbiddenException (403) is thrown.
+ *
+ * WARNING: Do not return the raw `decision` object -- it may contain policy internals
+ * (obligations, advice) that should not be exposed to clients. Build a safe response
+ * from specific fields only, or throw a custom HttpException for non-200 responses.
  */
 export type OnDenyHandler = (ctx: SubscriptionContext, decision: AuthorizationDecision) => any;
 
