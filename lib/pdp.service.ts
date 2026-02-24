@@ -4,8 +4,10 @@ import { SAPL_MODULE_OPTIONS } from './sapl.constants';
 import { SaplModuleOptions } from './sapl.interfaces';
 import { AuthorizationDecision, AuthorizationSubscription, Decision } from './types';
 
+const DEEP_EQUAL_MAX_DEPTH = 20;
+
 function deepEqual(a: any, b: any, depth = 0): boolean {
-  if (depth > 20) return false;
+  if (depth > DEEP_EQUAL_MAX_DEPTH) return false;
   if (a === b) return true;
   if (a == null || b == null) return a === b;
   if (typeof a !== typeof b) return false;

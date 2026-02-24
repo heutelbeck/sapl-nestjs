@@ -119,7 +119,10 @@ describe('PdpService', () => {
 
     test('whenTimeoutExceededThenResolvesWithIndeterminate', async () => {
       globalThis.fetch = jest.fn().mockImplementation(() =>
-        new Promise((_, reject) => setTimeout(() => reject(new Error('aborted')), 100)),
+        new Promise((_, reject) => {
+          const err = new DOMException('The operation was aborted', 'AbortError');
+          setTimeout(() => reject(err), 100);
+        }),
       );
 
       const service = createService({ timeout: 50 });

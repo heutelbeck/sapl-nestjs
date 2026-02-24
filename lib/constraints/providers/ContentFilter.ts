@@ -73,6 +73,7 @@ function validateSegments(segments: string[], path: string): void {
 function parsePath(path: string): string[] {
   validatePath(path);
   let normalized = path;
+  if (normalized === '$') return [];
   if (normalized.startsWith('$.')) {
     normalized = normalized.substring(2);
   }

@@ -25,8 +25,6 @@ export class EnforceRecoverableIfDeniedAspect implements LazyDecorator<any, Enfo
     const className = instance.constructor.name;
 
     return (...args: any[]) => {
-      const source$ = method(...args);
-
       return new Observable((subscriber) => {
         let currentBundle: StreamingConstraintHandlerBundle | null = null;
         let sourceSubscription: Subscription | null = null;
@@ -69,7 +67,7 @@ export class EnforceRecoverableIfDeniedAspect implements LazyDecorator<any, Enfo
               }
 
               if (!sourceSubscription) {
-                sourceSubscription = source$.subscribe({
+                sourceSubscription = method(...args).subscribe({
                   next: (value: any) => {
                     if (accessState !== 'permitted' || !currentBundle) return;
                     try {

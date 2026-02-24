@@ -40,6 +40,33 @@ describe('EnforceTillDeniedAspect', () => {
     return aspect.wrap({ method, metadata, methodName, instance } as any);
   }
 
+  describe('deferred method invocation', () => {
+    test('whenNoPermitReceivedThenMethodNotCalled', () => {
+      const method = jest.fn().mockReturnValue(new Subject().asObservable());
+      const bestEffortBundle = createMockStreamingBundle();
+      (constraintService.streamingBestEffortBundleFor as jest.Mock).mockReturnValue(bestEffortBundle);
+
+      const wrapped = wrapMethod(method);
+      wrapped().subscribe();
+
+      decisionSubject.next({ decision: 'DENY' });
+      expect(method).not.toHaveBeenCalled();
+    });
+
+    test('whenFirstPermitReceivedThenMethodCalledExactlyOnce', () => {
+      const bundle = createMockStreamingBundle();
+      (constraintService.streamingBundleFor as jest.Mock).mockReturnValue(bundle);
+      const method = jest.fn().mockReturnValue(new Subject().asObservable());
+
+      const wrapped = wrapMethod(method);
+      wrapped().subscribe();
+
+      expect(method).not.toHaveBeenCalled();
+      decisionSubject.next({ decision: 'PERMIT' });
+      expect(method).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('basic permit flow', () => {
     test('whenPermitThenSourceDataForwardedToSubscriber', (done) => {
       const sourceSubject = new Subject();
