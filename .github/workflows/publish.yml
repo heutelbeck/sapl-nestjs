@@ -51,12 +51,7 @@ jobs:
             exit 1
           fi
 
-      # TODO: Activate when ready to publish.
-      # 1. Create a granular access token on npmjs.com for the @sapl scope
-      # 2. Add it as NPM_TOKEN in the repository secrets
-      # 3. Remove the 'if: false' line below
       - name: Publish to npm
-        if: false
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
