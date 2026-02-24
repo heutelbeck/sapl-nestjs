@@ -3,7 +3,7 @@ import { SAPL_MODULE_OPTIONS } from '../lib/sapl.constants';
 
 function createService(overrides: Record<string, any> = {}): PdpService {
   return new PdpService({
-    baseUrl: 'http://localhost:8443',
+    baseUrl: 'https://localhost:8443',
     timeout: 5000,
     streamingMaxRetries: 0,
     ...overrides,
@@ -54,6 +54,31 @@ describe('PdpService', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+  });
+
+  describe('constructor', () => {
+    test('whenBaseUrlIsHttpWithoutFlagThenThrows', () => {
+      expect(() => createService({ baseUrl: 'http://localhost:8443' })).toThrow(
+        'Use HTTPS or set allowInsecureConnections: true',
+      );
+    });
+
+    test('whenBaseUrlIsHttpWithAllowInsecureThenCreatesService', () => {
+      const service = createService({
+        baseUrl: 'http://localhost:8443',
+        allowInsecureConnections: true,
+      });
+      expect(service).toBeInstanceOf(PdpService);
+    });
+
+    test('whenBaseUrlIsHttpsThenCreatesServiceNormally', () => {
+      const service = createService({ baseUrl: 'https://localhost:8443' });
+      expect(service).toBeInstanceOf(PdpService);
+    });
+
+    test('whenBaseUrlIsInvalidThenThrows', () => {
+      expect(() => createService({ baseUrl: 'not-a-url' })).toThrow();
+    });
   });
 
   describe('decideOnce', () => {
@@ -126,6 +151,54 @@ describe('PdpService', () => {
       const result = await service.decideOnce({ subject: 'user', action: 'read', resource: 'data' });
 
       expect(result).toEqual({ decision: 'INDETERMINATE' });
+    });
+
+    test('whenPdpReturnsNonObjectThenResolvesWithIndeterminate', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve('just a string'),
+      });
+
+      const service = createService();
+      const result = await service.decideOnce({ subject: 'user', action: 'read', resource: 'data' });
+
+      expect(result).toEqual({ decision: 'INDETERMINATE' });
+    });
+
+    test('whenPdpReturnsMissingDecisionFieldThenResolvesWithIndeterminate', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ status: 'ok' }),
+      });
+
+      const service = createService();
+      const result = await service.decideOnce({ subject: 'user', action: 'read', resource: 'data' });
+
+      expect(result).toEqual({ decision: 'INDETERMINATE' });
+    });
+
+    test('whenPdpReturnsUnknownFieldsThenDropsExtras', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ decision: 'PERMIT', message: 'hi', debug: {} }),
+      });
+
+      const service = createService();
+      const result = await service.decideOnce({ subject: 'user', action: 'read', resource: 'data' });
+
+      expect(result).toEqual({ decision: 'PERMIT' });
+    });
+
+    test('whenPdpReturnsObligationsThenPreserved', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ decision: 'PERMIT', obligations: [{ type: 'log' }] }),
+      });
+
+      const service = createService();
+      const result = await service.decideOnce({ subject: 'user', action: 'read', resource: 'data' });
+
+      expect(result).toEqual({ decision: 'PERMIT', obligations: [{ type: 'log' }] });
     });
   });
 
@@ -326,6 +399,47 @@ describe('PdpService', () => {
       });
     });
 
+    test('whenStreamContainsInvalidDecisionThenEmitsIndeterminate', (done) => {
+      const stream = createReadableStream([
+        '{"bad":"data"}\n',
+        '{"decision":"PERMIT"}\n',
+      ]);
+      globalThis.fetch = jest.fn().mockResolvedValue(mockFetchResponse(stream));
+
+      const service = createService();
+      const emissions: any[] = [];
+
+      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        next: (d) => emissions.push(d),
+        error: () => {
+          expect(decisions(emissions)).toEqual([
+            { decision: 'INDETERMINATE' },
+            { decision: 'PERMIT' },
+          ]);
+          done();
+        },
+      });
+    });
+
+    test('whenStreamingBufferExceedsLimitThenEmitsIndeterminateAndErrors', (done) => {
+      // Create a stream that sends >1MB with no newlines
+      const largeChunk = 'x'.repeat(1_100_000);
+      const stream = createReadableStream([largeChunk]);
+      globalThis.fetch = jest.fn().mockResolvedValue(mockFetchResponse(stream));
+
+      const service = createService();
+      const emissions: any[] = [];
+
+      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        next: (d) => emissions.push(d),
+        error: (err) => {
+          expect(emissions).toContainEqual({ decision: 'INDETERMINATE' });
+          expect(err.message).toBe('PDP streaming buffer overflow');
+          done();
+        },
+      });
+    });
+
     test('whenPdpStreamsRepeatedDecisionsThenDuplicatesSuppressed', (done) => {
       const stream = createReadableStream([
         'data: {"decision":"PERMIT"}\n\n',
@@ -354,11 +468,15 @@ describe('PdpService', () => {
   });
 
   describe('decide retry', () => {
+    let randomSpy: jest.SpyInstance;
+
     beforeEach(() => {
       jest.useFakeTimers();
+      randomSpy = jest.spyOn(Math, 'random').mockReturnValue(1.0);
     });
 
     afterEach(() => {
+      randomSpy.mockRestore();
       jest.useRealTimers();
     });
 

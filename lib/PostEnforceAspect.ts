@@ -62,12 +62,14 @@ export class PostEnforceAspect implements LazyDecorator<any, EnforceOptions> {
       bundle.handleOnDecisionConstraints();
       return bundle.handleAllOnNextConstraints(handlerResult);
     } catch (error) {
+      const asError = error instanceof Error ? error : new Error(String(error));
+      let mappedError: Error = asError;
       try {
-        bundle.handleAllOnErrorConstraints(error instanceof Error ? error : new Error(String(error)));
+        mappedError = bundle.handleAllOnErrorConstraints(asError);
       } catch (handlerError) {
         this.logger.warn(`Error handler failed while handling obligation failure: ${handlerError}`);
       }
-      this.logger.warn(`Obligation handling failed on PERMIT: ${error}`);
+      this.logger.warn(`Obligation handling failed on PERMIT: ${mappedError}`);
       return applyDeny(options, ctx, decision);
     }
   }

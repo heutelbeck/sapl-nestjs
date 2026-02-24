@@ -2,6 +2,12 @@
   "name": "@sapl/nestjs",
   "version": "0.1.0",
   "description": "SAPL authorization for NestJS - ABAC with constraint handling",
+  "author": "Dominic Heutelbeck",
+  "keywords": ["sapl", "nestjs", "abac", "authorization", "policy", "access-control", "streaming"],
+  "homepage": "https://github.com/heutelbeck/sapl-nestjs#readme",
+  "bugs": {
+    "url": "https://github.com/heutelbeck/sapl-nestjs/issues"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [

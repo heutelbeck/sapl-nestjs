@@ -2,27 +2,50 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Observable, distinctUntilChanged, retry, timer } from 'rxjs';
 import { SAPL_MODULE_OPTIONS } from './sapl.constants';
 import { SaplModuleOptions } from './sapl.interfaces';
-import { AuthorizationDecision, AuthorizationSubscription } from './types';
+import { AuthorizationDecision, AuthorizationSubscription, Decision } from './types';
 
-function deepEqual(a: any, b: any): boolean {
+function deepEqual(a: any, b: any, depth = 0): boolean {
+  if (depth > 20) return false;
   if (a === b) return true;
   if (a == null || b == null) return a === b;
   if (typeof a !== typeof b) return false;
   if (typeof a !== 'object') return false;
   if (Array.isArray(a)) {
-    return Array.isArray(b) && a.length === b.length && a.every((v, i) => deepEqual(v, b[i]));
+    return Array.isArray(b) && a.length === b.length && a.every((v, i) => deepEqual(v, b[i], depth + 1));
   }
   if (Array.isArray(b)) return false;
   const keysA = Object.keys(a);
   const keysB = Object.keys(b);
   if (keysA.length !== keysB.length) return false;
-  return keysA.every((k) => Object.prototype.hasOwnProperty.call(b, k) && deepEqual(a[k], b[k]));
+  return keysA.every((k) => Object.prototype.hasOwnProperty.call(b, k) && deepEqual(a[k], b[k], depth + 1));
 }
 
 const DEFAULT_TIMEOUT_MS = 5000;
+const MAX_BUFFER_SIZE = 1_048_576; // 1 MB
 const MAX_LOG_BODY_LENGTH = 500;
 const DEFAULT_RETRY_BASE_DELAY_MS = 1000;
 const DEFAULT_RETRY_MAX_DELAY_MS = 30000;
+const RETRY_ESCALATION_THRESHOLD = 5;
+const VALID_DECISIONS = new Set(['PERMIT', 'DENY', 'INDETERMINATE', 'NOT_APPLICABLE']);
+
+function validateDecision(raw: unknown, logger: Logger): AuthorizationDecision {
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+    logger.warn('PDP response is not an object, returning INDETERMINATE');
+    return { decision: 'INDETERMINATE' };
+  }
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.decision !== 'string' || !VALID_DECISIONS.has(obj.decision)) {
+    logger.warn(
+      `PDP response has invalid decision field: ${JSON.stringify(obj.decision)}, returning INDETERMINATE`,
+    );
+    return { decision: 'INDETERMINATE' };
+  }
+  const result: AuthorizationDecision = { decision: obj.decision as Decision };
+  if (Array.isArray(obj.obligations)) result.obligations = obj.obligations;
+  if (Array.isArray(obj.advice)) result.advice = obj.advice;
+  if (obj.resource !== undefined) result.resource = obj.resource;
+  return result;
+}
 
 @Injectable()
 export class PdpService {
@@ -31,11 +54,29 @@ export class PdpService {
   private readonly retryBaseDelay: number;
   private readonly retryMaxDelay: number;
   private readonly maxRetries: number;
+  private readonly decideOnceUrl: string;
+  private readonly decideUrl: string;
 
   constructor(
     @Inject(SAPL_MODULE_OPTIONS)
     private readonly options: SaplModuleOptions,
   ) {
+    const parsedUrl = new URL(this.options.baseUrl);
+    if (parsedUrl.protocol === 'http:') {
+      if (!this.options.allowInsecureConnections) {
+        throw new Error(
+          `PDP base URL uses HTTP (${this.options.baseUrl}). ` +
+          'SAPL PDP communication carries authorization decisions and potentially sensitive information. ' +
+          'Use HTTPS or set allowInsecureConnections: true to accept the risk.',
+        );
+      }
+      this.logger.warn(
+        'PDP connection uses unencrypted HTTP. Authorization decisions and potentially sensitive ' +
+        'information are transmitted in plaintext. Do not use HTTP in production.',
+      );
+    }
+    this.decideOnceUrl = new URL('/api/pdp/decide-once', this.options.baseUrl).toString();
+    this.decideUrl = new URL('/api/pdp/decide', this.options.baseUrl).toString();
     this.timeoutMs = options.timeout ?? DEFAULT_TIMEOUT_MS;
     this.retryBaseDelay = options.streamingRetryBaseDelay ?? DEFAULT_RETRY_BASE_DELAY_MS;
     this.retryMaxDelay = options.streamingRetryMaxDelay ?? DEFAULT_RETRY_MAX_DELAY_MS;
@@ -61,7 +102,7 @@ export class PdpService {
       }
 
       const response = await fetch(
-        `${this.options.baseUrl}/api/pdp/decide-once`,
+        this.decideOnceUrl,
         {
           method: 'POST',
           headers,
@@ -79,7 +120,7 @@ export class PdpService {
         }
         this.logger.error(
           `PDP returned HTTP ${response.status} (${response.statusText}) ` +
-            `for ${this.options.baseUrl}/api/pdp/decide-once` +
+            `for ${this.decideOnceUrl}` +
             (responseBody
               ? ` -- body: ${responseBody.length > MAX_LOG_BODY_LENGTH ? responseBody.substring(0, MAX_LOG_BODY_LENGTH) + '...' : responseBody}`
               : ''),
@@ -89,16 +130,16 @@ export class PdpService {
 
       const decision = await response.json();
       this.logger.debug(`Decision: ${JSON.stringify(decision)}`);
-      return decision;
+      return validateDecision(decision, this.logger);
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         this.logger.error(
-          `PDP request to ${this.options.baseUrl}/api/pdp/decide-once timed out after ${this.timeoutMs}ms`,
+          `PDP request to ${this.decideOnceUrl} timed out after ${this.timeoutMs}ms`,
         );
       } else {
         const msg = error instanceof Error ? error.message : String(error);
         this.logger.error(
-          `PDP request to ${this.options.baseUrl}/api/pdp/decide-once failed: ${msg}`,
+          `PDP request to ${this.decideOnceUrl} failed: ${msg}`,
         );
       }
       return { decision: 'INDETERMINATE' };
@@ -126,7 +167,7 @@ export class PdpService {
         headers['Authorization'] = `Bearer ${this.options.token}`;
       }
 
-      fetch(`${this.options.baseUrl}/api/pdp/decide`, {
+      fetch(this.decideUrl, {
         method: 'POST',
         headers,
         body,
@@ -143,7 +184,7 @@ export class PdpService {
           }
           this.logger.error(
             `PDP returned HTTP ${response.status} (${response.statusText}) ` +
-              `for ${this.options.baseUrl}/api/pdp/decide` +
+              `for ${this.decideUrl}` +
               (responseBody
                 ? ` -- body: ${responseBody.length > MAX_LOG_BODY_LENGTH ? responseBody.substring(0, MAX_LOG_BODY_LENGTH) + '...' : responseBody}`
                 : ''),
@@ -171,6 +212,16 @@ export class PdpService {
 
             buffer += decoder.decode(value, { stream: true });
 
+            if (buffer.length > MAX_BUFFER_SIZE) {
+              this.logger.error(
+                `PDP streaming buffer exceeded ${MAX_BUFFER_SIZE} bytes. ` +
+                'Aborting connection to prevent memory exhaustion.',
+              );
+              subscriber.next({ decision: 'INDETERMINATE' });
+              subscriber.error(new Error('PDP streaming buffer overflow'));
+              return;
+            }
+
             const lines = buffer.split('\n');
             buffer = lines.pop() ?? '';
 
@@ -184,7 +235,7 @@ export class PdpService {
               try {
                 const decision = JSON.parse(data);
                 this.logger.debug(`Streaming decision: ${JSON.stringify(decision)}`);
-                subscriber.next(decision);
+                subscriber.next(validateDecision(decision, this.logger));
               } catch (parseError) {
                 this.logger.warn(`Failed to parse streaming data: ${data}`);
               }
@@ -199,7 +250,7 @@ export class PdpService {
             if (data !== '') {
               try {
                 const decision = JSON.parse(data);
-                subscriber.next(decision);
+                subscriber.next(validateDecision(decision, this.logger));
               } catch {
                 /* ignore trailing partial data */
               }
@@ -221,12 +272,12 @@ export class PdpService {
         if (controller.signal.aborted) return;
         if (error instanceof Error && error.name === 'AbortError') {
           this.logger.error(
-            `PDP streaming connection to ${this.options.baseUrl}/api/pdp/decide timed out after ${this.timeoutMs}ms`,
+            `PDP streaming connection to ${this.decideUrl} timed out after ${this.timeoutMs}ms`,
           );
         } else {
           const msg = error instanceof Error ? error.message : String(error);
           this.logger.error(
-            `PDP streaming request to ${this.options.baseUrl}/api/pdp/decide failed: ${msg}`,
+            `PDP streaming request to ${this.decideUrl} failed: ${msg}`,
           );
         }
         subscriber.next({ decision: 'INDETERMINATE' });
@@ -244,14 +295,19 @@ export class PdpService {
       retry({
         count: this.maxRetries,
         delay: (_error, retryCount) => {
-          const delay = Math.min(
+          const baseDelay = Math.min(
             this.retryBaseDelay * Math.pow(2, retryCount - 1),
             this.retryMaxDelay,
           );
-          this.logger.warn(
+          const delay = Math.round(baseDelay * (0.5 + Math.random() * 0.5));
+          const message =
             `PDP streaming connection lost, reconnecting in ${delay}ms` +
-              ` (attempt ${retryCount}${this.maxRetries === Infinity ? '' : `/${this.maxRetries}`})`,
-          );
+            ` (attempt ${retryCount}${this.maxRetries === Infinity ? '' : `/${this.maxRetries}`})`;
+          if (retryCount >= RETRY_ESCALATION_THRESHOLD) {
+            this.logger.error(message);
+          } else {
+            this.logger.warn(message);
+          }
           return timer(delay);
         },
       }),

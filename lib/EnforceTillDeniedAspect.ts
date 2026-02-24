@@ -40,11 +40,16 @@ export class EnforceTillDeniedAspect implements LazyDecorator<any, EnforceTillDe
           next: (decision) => {
             if (decision.decision === 'PERMIT') {
               try {
-                currentBundle = aspect.constraintService.streamingBundleFor(decision);
-                currentBundle.handleOnDecisionConstraints();
+                const newBundle = aspect.constraintService.streamingBundleFor(decision);
+                newBundle.handleOnDecisionConstraints();
+                currentBundle = newBundle;
               } catch (error) {
                 aspect.logger.warn(`Obligation handling failed: ${error}`);
-                metadata.onStreamDeny?.(decision, subscriber);
+                try {
+                  metadata.onStreamDeny?.(decision, subscriber);
+                } catch (callbackError) {
+                  aspect.logger.warn(`onStreamDeny callback failed: ${callbackError}`);
+                }
                 subscriber.error(new ForbiddenException('Access denied by policy'));
                 return;
               }
@@ -77,7 +82,11 @@ export class EnforceTillDeniedAspect implements LazyDecorator<any, EnforceTillDe
               } catch {
                 /* best effort */
               }
-              metadata.onStreamDeny?.(decision, subscriber);
+              try {
+                metadata.onStreamDeny?.(decision, subscriber);
+              } catch (callbackError) {
+                aspect.logger.warn(`onStreamDeny callback failed: ${callbackError}`);
+              }
               subscriber.error(new ForbiddenException('Access denied by policy'));
             }
           },

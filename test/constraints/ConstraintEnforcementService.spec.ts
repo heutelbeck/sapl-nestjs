@@ -81,7 +81,7 @@ class StatusFilterProvider implements FilterPredicateConstraintHandlerProvider {
 class InjectHeaderProvider implements MethodInvocationConstraintHandlerProvider {
   isResponsible(constraint: any) { return constraint?.type === 'injectHeader'; }
   getHandler(constraint: any) {
-    return (context: MethodInvocationContext) => { context.request.headers[constraint.headerName] = constraint.value; };
+    return (context: MethodInvocationContext) => { context.request.headers![constraint.headerName] = constraint.value; };
   }
 }
 

@@ -2,7 +2,7 @@ import { ModuleMetadata } from '@nestjs/common';
 import { ClsModuleOptions } from 'nestjs-cls';
 
 export interface SaplModuleOptions {
-  /** Base URL of the SAPL PDP server (e.g., 'http://localhost:8443') */
+  /** Base URL of the SAPL PDP server (e.g., 'https://localhost:8443') */
   baseUrl: string;
   /** Bearer token for PDP REST API authentication (optional for noauth mode) */
   token?: string;
@@ -14,6 +14,8 @@ export interface SaplModuleOptions {
   streamingRetryBaseDelay?: number;
   /** Maximum backoff delay in ms for streaming reconnection (default: 30000) */
   streamingRetryMaxDelay?: number;
+  /** Set to true to allow unencrypted HTTP connections to the PDP. NOT RECOMMENDED for production. */
+  allowInsecureConnections?: boolean;
   /** Options merged into ClsModule.forRoot(). Default: { global: true, middleware: { mount: true } } */
   cls?: Partial<ClsModuleOptions>;
 }

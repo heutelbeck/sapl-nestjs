@@ -1,3 +1,5 @@
+export type Decision = 'PERMIT' | 'DENY' | 'INDETERMINATE' | 'NOT_APPLICABLE';
+
 /**
  * A PDP authorization decision with optional constraints.
  *
@@ -7,7 +9,7 @@
  * `resource` replaces the handler's return value when present.
  */
 export interface AuthorizationDecision {
-  decision: string;
+  decision: Decision;
   obligations?: unknown[];
   advice?: unknown[];
   resource?: unknown;

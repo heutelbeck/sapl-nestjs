@@ -42,21 +42,30 @@ export class EnforceRecoverableIfDeniedAspect implements LazyDecorator<any, Enfo
 
             if (decision.decision === 'PERMIT') {
               try {
-                currentBundle = aspect.constraintService.streamingBundleFor(decision);
-                currentBundle.handleOnDecisionConstraints();
+                const newBundle = aspect.constraintService.streamingBundleFor(decision);
+                newBundle.handleOnDecisionConstraints();
+                currentBundle = newBundle;
               } catch (error) {
                 aspect.logger.warn(`Obligation handling failed: ${error}`);
                 accessState = 'denied';
                 currentBundle = null;
                 if (previousState !== 'denied') {
-                  metadata.onStreamDeny?.(decision, subscriber);
+                  try {
+                    metadata.onStreamDeny?.(decision, subscriber);
+                  } catch (callbackError) {
+                    aspect.logger.warn(`onStreamDeny callback failed: ${callbackError}`);
+                  }
                 }
                 return;
               }
               accessState = 'permitted';
 
               if (previousState === 'denied') {
-                metadata.onStreamRecover?.(decision, subscriber);
+                try {
+                  metadata.onStreamRecover?.(decision, subscriber);
+                } catch (callbackError) {
+                  aspect.logger.warn(`onStreamRecover callback failed: ${callbackError}`);
+                }
               }
 
               if (!sourceSubscription) {
@@ -68,6 +77,8 @@ export class EnforceRecoverableIfDeniedAspect implements LazyDecorator<any, Enfo
                       subscriber.next(transformed);
                     } catch (error) {
                       aspect.logger.warn(`Constraint handling failed on next: ${error}`);
+                      accessState = 'denied';
+                      currentBundle = null;
                     }
                   },
                   error: (err: any) => subscriber.error(err),
@@ -87,7 +98,11 @@ export class EnforceRecoverableIfDeniedAspect implements LazyDecorator<any, Enfo
               }
 
               if (previousState !== 'denied') {
-                metadata.onStreamDeny?.(decision, subscriber);
+                try {
+                  metadata.onStreamDeny?.(decision, subscriber);
+                } catch (callbackError) {
+                  aspect.logger.warn(`onStreamDeny callback failed: ${callbackError}`);
+                }
               }
             }
           },

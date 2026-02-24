@@ -40,8 +40,9 @@ export class EnforceDropWhileDeniedAspect implements LazyDecorator<any, EnforceD
           next: (decision) => {
             if (decision.decision === 'PERMIT') {
               try {
-                currentBundle = aspect.constraintService.streamingBundleFor(decision);
-                currentBundle.handleOnDecisionConstraints();
+                const newBundle = aspect.constraintService.streamingBundleFor(decision);
+                newBundle.handleOnDecisionConstraints();
+                currentBundle = newBundle;
               } catch (error) {
                 aspect.logger.warn(`Obligation handling failed: ${error}`);
                 permitted = false;
@@ -59,6 +60,8 @@ export class EnforceDropWhileDeniedAspect implements LazyDecorator<any, EnforceD
                       subscriber.next(transformed);
                     } catch (error) {
                       aspect.logger.warn(`Constraint handling failed on next: ${error}`);
+                      permitted = false;
+                      currentBundle = null;
                     }
                   },
                   error: (err: any) => subscriber.error(err),

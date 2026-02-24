@@ -7,7 +7,7 @@ describe('SaplModule', () => {
   test('whenForRootThenPdpServiceAndConstraintServiceResolvable', async () => {
     const module = await Test.createTestingModule({
       imports: [
-        SaplModule.forRoot({ baseUrl: 'http://localhost:8443' }),
+        SaplModule.forRoot({ baseUrl: 'https://localhost:8443' }),
       ],
     }).compile();
 
@@ -21,7 +21,7 @@ describe('SaplModule', () => {
     const module = await Test.createTestingModule({
       imports: [
         SaplModule.forRootAsync({
-          useFactory: () => ({ baseUrl: 'http://localhost:8443', token: 'test-token' }),
+          useFactory: () => ({ baseUrl: 'https://localhost:8443', token: 'test-token' }),
         }),
       ],
     }).compile();

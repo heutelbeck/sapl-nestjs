@@ -47,7 +47,7 @@ import { SaplModule } from '@sapl/nestjs';
 @Module({
   imports: [
     SaplModule.forRoot({
-      baseUrl: 'http://localhost:8443',
+      baseUrl: 'https://localhost:8443',
       token: 'sapl_your_token_here',
       timeout: 5000, // PDP request timeout in ms (default: 5000)
     }),
@@ -69,7 +69,7 @@ import { SaplModule } from '@sapl/nestjs';
     SaplModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
-        baseUrl: config.get('SAPL_PDP_URL', 'http://localhost:8443'),
+        baseUrl: config.get('SAPL_PDP_URL', 'https://localhost:8443'),
         token: config.get('SAPL_PDP_TOKEN'),
       }),
       inject: [ConfigService],
@@ -87,6 +87,31 @@ export class AppModule {}
 - Built-in `ContentFilteringProvider` and `ContentFilterPredicateProvider`
 
 The decorators work on any injectable class method -- controllers, services, repositories, etc. Methods without enforcement decorators are unaffected.
+
+## Security
+
+### Transport Security
+
+`@sapl/nestjs` requires HTTPS for PDP communication by default. Authorization decisions and potentially sensitive information are transmitted over this connection -- using unencrypted HTTP would expose this data to network-level attackers.
+
+For local development without TLS, set `allowInsecureConnections: true`:
+
+```typescript
+SaplModule.forRoot({
+  baseUrl: 'http://localhost:8443',
+  allowInsecureConnections: true, // HTTP only -- never use in production
+}),
+```
+
+For custom CA certificates or self-signed certificates in production, configure Node.js at the process level via the `NODE_EXTRA_CA_CERTS` environment variable.
+
+### Response Validation
+
+PDP responses are validated before use. Malformed responses (non-object, missing or invalid `decision` field) are treated as `INDETERMINATE` (deny). Unknown fields in the response are silently dropped to stay robust against future PDP extensions.
+
+### Streaming Limits
+
+The streaming NDJSON parser enforces a 1 MB buffer limit per connection. If the PDP sends data without newline delimiters exceeding this limit, the connection is aborted and an `INDETERMINATE` decision is emitted. This protects against memory exhaustion from misbehaving upstream connections.
 
 ## Decorators
 
@@ -147,12 +172,12 @@ The `SubscriptionContext` provides:
 |---------------|----------------------------|----------------------------------------------------------|
 | `request`     | `any`                      | Full Express request (`req.user`, `req.headers`, etc.)   |
 | `params`      | `Record<string, string>`   | Route parameters (`@Get(':id')` -> `ctx.params.id`)      |
-| `query`       | `Record<string, string>`   | Query string parameters                                  |
+| `query`       | `Record<string, string \| string[]>` | Query string parameters                          |
 | `body`        | `any`                      | Request body (POST/PUT)                                  |
 | `handler`     | `string`                   | Handler method name                                      |
 | `controller`  | `string`                   | Controller class name                                    |
 | `returnValue` | `any`                      | Handler return value (`@PostEnforce` only)                |
-| `args`        | `any[]`                    | Method arguments                                         |
+| `args`        | `any[] \| undefined`       | Method arguments (optional)                              |
 
 #### Default Values
 
@@ -430,6 +455,8 @@ All three streaming aspects:
 - Run best-effort constraint handlers on DENY decisions
 - Clean up both the PDP subscription and source subscription on unsubscribe
 
+> **Note:** The source observable is subscribed only after the first PERMIT decision arrives from the PDP. For hot observables (WebSocket streams, event emitters), events emitted before the initial PERMIT are not buffered and will not be delivered. This is intentional -- data should not be buffered before authorization is confirmed.
+
 ### Streaming Signals
 
 Runnables can target different lifecycle signals:
@@ -480,7 +507,7 @@ CLS (Continuation-Local Storage) provides per-request context that follows the a
 
 ```typescript
 SaplModule.forRoot({
-  baseUrl: 'http://localhost:8443',
+  baseUrl: 'https://localhost:8443',
   cls: {
     middleware: {
       mount: true,
@@ -504,6 +531,8 @@ The `cls` options are merged into the default configuration (`{ global: true, mi
 | Subject is `'anonymous'` | No auth guard populating `req.user` | Add `@UseGuards()` or set subject explicitly in EnforceOptions |
 | Content filter throws | Unsupported JSONPath | Only simple dot paths supported (`$.field.nested`) |
 | CLS context missing | Module order | Ensure `SaplModule` is imported before modules that use it |
+| `allowInsecureConnections` error | `baseUrl` uses HTTP | Use HTTPS or set `allowInsecureConnections: true` for development |
+| Streaming buffer overflow | PDP proxy injecting data | Check network path to PDP; 1 MB buffer limit per NDJSON line |
 
 ## License
 

@@ -4,7 +4,7 @@ export { SAPL_MODULE_OPTIONS } from './sapl.constants';
 export { SaplModuleOptions, SaplModuleAsyncOptions } from './sapl.interfaces';
 
 // Types
-export { AuthorizationDecision, AuthorizationSubscription } from './types';
+export { Decision, AuthorizationDecision, AuthorizationSubscription } from './types';
 
 // PDP
 export { PdpService } from './pdp.service';
@@ -30,7 +30,7 @@ export {
   OnStreamDenyHandler,
   OnStreamRecoverHandler,
 } from './StreamingEnforceOptions';
-export { SubscriptionContext } from './SubscriptionContext';
+export { SaplRequest, SubscriptionContext } from './SubscriptionContext';
 export { MethodInvocationContext } from './MethodInvocationContext';
 
 // Constraint handler API

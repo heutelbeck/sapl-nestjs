@@ -5,6 +5,7 @@ const BLACK_SQUARE = '\u2588';
 function getByPath(obj: any, segments: string[]): any {
   let current = obj;
   for (const segment of segments) {
+    if (DANGEROUS_SEGMENTS.has(segment)) return undefined;
     if (current == null || typeof current !== 'object') return undefined;
     current = current[segment];
   }
@@ -87,18 +88,19 @@ function blacken(
   discloseRight: number,
   length?: number,
 ): string {
-  if (value.length === 0) return value;
+  const chars = [...value];
+  if (chars.length === 0) return value;
 
-  const left = Math.min(discloseLeft, value.length);
-  const right = Math.min(discloseRight, Math.max(0, value.length - left));
-  const maskedCount = value.length - left - right;
+  const left = Math.min(discloseLeft, chars.length);
+  const right = Math.min(discloseRight, Math.max(0, chars.length - left));
+  const maskedCount = chars.length - left - right;
 
   if (maskedCount <= 0) return value;
 
   const finalLength = length !== undefined && length >= 0 ? length : maskedCount;
 
-  const prefix = value.substring(0, left);
-  const suffix = value.substring(value.length - right);
+  const prefix = chars.slice(0, left).join('');
+  const suffix = chars.slice(chars.length - right).join('');
   const masked = replacement.repeat(finalLength);
   return prefix + masked + suffix;
 }
@@ -158,6 +160,18 @@ function applyAction(obj: any, action: any): void {
   }
 }
 
+function precompileConditions(conditions: any[]): void {
+  for (const condition of conditions) {
+    if (condition.type === '=~') {
+      const pattern = String(condition.value);
+      if (!safe(pattern)) {
+        throw new Error(`Unsafe regex pattern rejected (potential ReDoS): '${pattern}'.`);
+      }
+      condition._compiledRegex = new RegExp(pattern);
+    }
+  }
+}
+
 function evaluateCondition(element: any, condition: any): boolean {
   const segments = parsePath(condition.path ?? '');
   const actual = getByPath(element, segments);
@@ -177,13 +191,8 @@ function evaluateCondition(element: any, condition: any): boolean {
       return actual > expected;
     case '<':
       return actual < expected;
-    case '=~': {
-      const pattern = String(expected);
-      if (!safe(pattern)) {
-        throw new Error(`Unsafe regex pattern rejected (potential ReDoS): '${pattern}'.`);
-      }
-      return typeof actual === 'string' && new RegExp(pattern).test(actual);
-    }
+    case '=~':
+      return typeof actual === 'string' && condition._compiledRegex.test(actual);
     default:
       throw new Error(`Not a valid predicate condition type: '${operator}'.`);
   }
@@ -196,6 +205,7 @@ function meetsConditions(element: any, conditions: any[]): boolean {
 export function getHandler(constraint: any): (value: any) => any {
   const actions: any[] = constraint.actions ?? [];
   const conditions: any[] = constraint.conditions ?? [];
+  precompileConditions(conditions);
 
   return (value: any): any => {
     if (value == null) return value;
@@ -221,5 +231,6 @@ export function getHandler(constraint: any): (value: any) => any {
 
 export function predicateFromConditions(constraint: any): (element: any) => boolean {
   const conditions: any[] = constraint.conditions ?? [];
+  precompileConditions(conditions);
   return (element: any): boolean => meetsConditions(element, conditions);
 }

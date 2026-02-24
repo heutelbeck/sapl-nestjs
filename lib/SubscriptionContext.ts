@@ -1,4 +1,23 @@
 /**
+ * Minimal structural type for the HTTP request. Covers properties used by
+ * the library's default subscription builders. Compatible with both Express
+ * and Fastify request objects.
+ */
+export interface SaplRequest {
+  user?: unknown;
+  method?: string;
+  url?: string;
+  ip?: string;
+  hostname?: string;
+  route?: { path?: string };
+  params?: Record<string, string>;
+  query?: Record<string, string | string[]>;
+  body?: unknown;
+  headers?: Record<string, string | string[] | undefined>;
+  [key: string]: unknown;
+}
+
+/**
  * Context available to subscription field callbacks at request time.
  *
  * Passed to any EnforceOptions field that is a function, allowing dynamic
@@ -9,7 +28,7 @@
  */
 export interface SubscriptionContext {
   /** The full HTTP request object (has .user, .headers, .cookies, etc.) */
-  request: any;
+  request: SaplRequest;
   /** Route parameters -- @Get(':pilotId') -> ctx.params.pilotId */
   params: Record<string, string>;
   /** Query string parameters -- ?page=2 -> ctx.query.page */
