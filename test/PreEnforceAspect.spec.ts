@@ -60,6 +60,29 @@ describe('PreEnforceAspect', () => {
     expect(method).not.toHaveBeenCalled();
   });
 
+  test('whenDeniedWithObligationsThenErrorMessageContainsNoPolicyInternals', async () => {
+    (pdpService.decideOnce as jest.Mock).mockResolvedValue({
+      decision: 'DENY',
+      obligations: [{ type: 'sensitiveObligationName' }],
+    });
+    const bundle = createMockBundle();
+    (constraintService.bestEffortBundleFor as jest.Mock).mockReturnValue(bundle);
+    const method = jest.fn();
+
+    const wrapped = wrapMethod(method);
+    try {
+      await wrapped();
+      fail('Expected ForbiddenException');
+    } catch (error: any) {
+      const msg = error.message;
+      expect(msg).toBe('Access Denied by PDP');
+      expect(msg.toLowerCase()).not.toContain('obligation');
+      expect(msg.toLowerCase()).not.toContain('handler');
+      expect(msg.toLowerCase()).not.toContain('policy');
+      expect(msg).not.toContain('sensitiveObligationName');
+    }
+  });
+
   test('whenDenyWithOnDenyThenReturnsCustomResponseAndMethodNotCalled', async () => {
     const onDeny = jest.fn().mockReturnValue({ error: 'denied' });
     (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'DENY' });

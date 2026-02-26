@@ -527,5 +527,19 @@ describe('EnforceTillDeniedAspect', () => {
 
       decisionSubject.error(new Error('pdp stream error'));
     });
+
+    test('whenUnsubscribedTwiceThenNoError', () => {
+      const method = jest.fn().mockReturnValue(new Subject().asObservable());
+      const bundle = createMockStreamingBundle();
+      (constraintService.streamingBundleFor as jest.Mock).mockReturnValue(bundle);
+
+      const wrapped = wrapMethod(method);
+      const sub = wrapped().subscribe();
+
+      decisionSubject.next({ decision: 'PERMIT' });
+      sub.unsubscribe();
+
+      expect(() => sub.unsubscribe()).not.toThrow();
+    });
   });
 });

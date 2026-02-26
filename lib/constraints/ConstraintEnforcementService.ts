@@ -28,7 +28,12 @@ type HandlerLists = {
 };
 
 function runBoth(a: () => void, b: () => void): () => void {
-  return () => { a(); b(); };
+  return () => {
+    let firstError: unknown = null;
+    try { a(); } catch (e) { firstError = e; }
+    try { b(); } catch (e) { if (!firstError) firstError = e; }
+    if (firstError) throw firstError;
+  };
 }
 
 function consumeWithBoth(

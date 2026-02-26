@@ -119,6 +119,30 @@ class OnCancelRunnableProvider implements RunnableConstraintHandlerProvider {
   getHandler(constraint: any) { return () => { this.calls.push(constraint); }; }
 }
 
+let trackingOrder: string[] = [];
+
+@Injectable()
+@SaplConstraintHandler('filterPredicate')
+class TrackingFilterProvider implements FilterPredicateConstraintHandlerProvider {
+  isResponsible(constraint: any) { return constraint?.type === 'trackOrder'; }
+  getHandler(_constraint: any) { return (_el: any) => { trackingOrder.push('filter'); return true; }; }
+}
+
+@Injectable()
+@SaplConstraintHandler('consumer')
+class TrackingConsumerProvider implements ConsumerConstraintHandlerProvider {
+  isResponsible(constraint: any) { return constraint?.type === 'trackOrder'; }
+  getHandler(_constraint: any) { return (_v: any) => { trackingOrder.push('consumer'); }; }
+}
+
+@Injectable()
+@SaplConstraintHandler('mapping')
+class TrackingMappingProvider implements MappingConstraintHandlerProvider {
+  isResponsible(constraint: any) { return constraint?.type === 'trackOrder'; }
+  getPriority() { return 0; }
+  getHandler(_constraint: any) { return (v: any) => { trackingOrder.push('mapping'); return v; }; }
+}
+
 // -- Helpers ---------------------------------------------------------------
 
 async function createService(providers: any[] = []) {
@@ -821,6 +845,48 @@ describe('ConstraintEnforcementService', () => {
       });
 
       expect(() => bundle.handleOnDecisionConstraints()).not.toThrow();
+    });
+  });
+
+  describe('obligation execution guarantees', () => {
+    test('whenMultipleObligationsAndFirstFailsThenAllStillAttempted', async () => {
+      const { service, getProvider } = await createService([
+        FailingRunnableProvider,
+        LogOnDecisionProvider,
+      ]);
+
+      const bundle = service.preEnforceBundleFor({
+        decision: 'PERMIT',
+        obligations: [
+          { type: 'failingRunnable' },
+          { type: 'logAccess' },
+        ],
+      });
+
+      const logProvider = getProvider(LogOnDecisionProvider);
+
+      expect(() => bundle.handleOnDecisionConstraints()).toThrow(ForbiddenException);
+      expect(logProvider.calls.length).toBe(1);
+    });
+  });
+
+  describe('handler ordering', () => {
+    beforeEach(() => { trackingOrder = []; });
+
+    test('whenOnNextThenFilterBeforeConsumerBeforeMapping', async () => {
+      const { service } = await createService([
+        TrackingFilterProvider,
+        TrackingConsumerProvider,
+        TrackingMappingProvider,
+      ]);
+
+      const bundle = service.postEnforceBundleFor({
+        decision: 'PERMIT',
+        obligations: [{ type: 'trackOrder' }],
+      });
+
+      bundle.handleAllOnNextConstraints(42);
+      expect(trackingOrder).toEqual(['filter', 'consumer', 'mapping']);
     });
   });
 });

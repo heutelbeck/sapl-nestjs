@@ -48,7 +48,7 @@ export function createStreamingEnforcement<T>(
             }
             if (config.terminalOnDeny && !terminated) {
               terminated = true;
-              subscriber.error(new ForbiddenException('Access denied by policy'));
+              subscriber.error(new ForbiddenException('Access Denied by PDP'));
             }
             return;
           }
@@ -70,15 +70,8 @@ export function createStreamingEnforcement<T>(
                   if (config.terminalOnDeny) {
                     if (!terminated) {
                       terminated = true;
-                      subscriber.error(new ForbiddenException('Constraint handling failed'));
+                      subscriber.error(new ForbiddenException('Access Denied by PDP'));
                     }
-                  } else if (config.onStreamDeny) {
-                    accessState = 'denied';
-                    currentBundle = null;
-                    invokeOnStreamDeny(config.onStreamDeny, decision, restrictedEmitter, logger);
-                  } else {
-                    accessState = 'denied';
-                    currentBundle = null;
                   }
                 }
               },
@@ -106,7 +99,7 @@ export function createStreamingEnforcement<T>(
 
           if (config.terminalOnDeny && !terminated) {
             terminated = true;
-            subscriber.error(new ForbiddenException('Access denied by policy'));
+            subscriber.error(new ForbiddenException('Access Denied by PDP'));
           }
         }
       },

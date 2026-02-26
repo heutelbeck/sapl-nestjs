@@ -1,6 +1,6 @@
 {
   "name": "@sapl/nestjs",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "SAPL authorization for NestJS - ABAC with constraint handling",
   "author": "Dominic Heutelbeck",
   "keywords": [

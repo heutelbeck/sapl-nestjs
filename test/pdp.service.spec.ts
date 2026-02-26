@@ -79,6 +79,12 @@ describe('PdpService', () => {
     test('whenBaseUrlIsInvalidThenThrows', () => {
       expect(() => createService({ baseUrl: 'not-a-url' })).toThrow();
     });
+
+    test('whenBothTokenAndBasicAuthConfiguredThenThrows', () => {
+      expect(() =>
+        createService({ token: 'my-token', username: 'user', secret: 'pass' }),
+      ).toThrow('authentication conflict');
+    });
   });
 
   describe('decideOnce', () => {
@@ -202,6 +208,90 @@ describe('PdpService', () => {
       const result = await service.decideOnce({ subject: 'user', action: 'read', resource: 'data' });
 
       expect(result).toEqual({ decision: 'PERMIT', obligations: [{ type: 'log' }] });
+    });
+
+    test('whenBasicAuthConfiguredThenBasicHeaderSent', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ decision: 'PERMIT' }),
+      });
+
+      const service = createService({ username: 'admin', secret: 's3cret' });
+      await service.decideOnce({ subject: 'user', action: 'read', resource: 'data' });
+
+      const [, init] = (globalThis.fetch as jest.Mock).mock.calls[0];
+      const expected = `Basic ${Buffer.from('admin:s3cret').toString('base64')}`;
+      expect(init.headers['Authorization']).toBe(expected);
+    });
+
+    test('whenSubscriptionHasSecretsThenSecretsNotInLogs', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ decision: 'PERMIT' }),
+      });
+
+      const service = createService();
+      const logSpy = jest.spyOn((service as any).logger, 'debug');
+
+      await service.decideOnce({
+        subject: 'user',
+        action: 'read',
+        resource: 'data',
+        secrets: { apiKey: 'super-secret-key-12345' },
+      } as any);
+
+      const allLogs = logSpy.mock.calls.map((c) => c[0]).join(' ');
+      expect(allLogs).not.toContain('super-secret-key-12345');
+      logSpy.mockRestore();
+    });
+
+    test('whenAuthConfiguredThenCredentialsNotInLogs', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ decision: 'PERMIT' }),
+      });
+
+      const service = createService({ token: 'sensitive-bearer-token' });
+      const debugSpy = jest.spyOn((service as any).logger, 'debug');
+      const logSpy = jest.spyOn((service as any).logger, 'log');
+
+      await service.decideOnce({ subject: 'user', action: 'read', resource: 'data' });
+
+      const allLogs = [...debugSpy.mock.calls, ...logSpy.mock.calls]
+        .map((c) => c[0])
+        .join(' ');
+      expect(allLogs).not.toContain('sensitive-bearer-token');
+      debugSpy.mockRestore();
+      logSpy.mockRestore();
+    });
+
+    test('whenPdpReturnsErrorThenResponseBodyTruncatedInLog', async () => {
+      const longBody = 'x'.repeat(1000);
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+        text: () => Promise.resolve(longBody),
+      });
+
+      const service = createService();
+      const errorSpy = jest.spyOn((service as any).logger, 'error');
+
+      await service.decideOnce({ subject: 'user', action: 'read', resource: 'data' });
+
+      const loggedBody = errorSpy.mock.calls.map((c) => c[0]).join(' ');
+      expect(loggedBody).not.toContain(longBody);
+      expect(loggedBody).toContain('...');
+      errorSpy.mockRestore();
+    });
+
+    test('whenRequestResponseFailsThenNoRetry', async () => {
+      globalThis.fetch = jest.fn().mockRejectedValue(new Error('Connection refused'));
+
+      const service = createService();
+      await service.decideOnce({ subject: 'user', action: 'read', resource: 'data' });
+
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -468,6 +558,66 @@ describe('PdpService', () => {
         },
       });
     });
+
+    test('whenMultiByteUtf8SplitAcrossChunksThenParsesCorrectly', (done) => {
+      const encoder = new TextEncoder();
+      const fullLine = 'data: {"decision":"PERMIT","resource":"\u00fc\u00e4\u00f6"}\n\n';
+      const bytes = encoder.encode(fullLine);
+      const splitPoint = Math.floor(bytes.length / 2);
+      const chunk1 = bytes.slice(0, splitPoint);
+      const chunk2 = bytes.slice(splitPoint);
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(chunk1);
+          controller.enqueue(chunk2);
+          controller.close();
+        },
+      });
+      globalThis.fetch = jest.fn().mockResolvedValue(mockFetchResponse(stream));
+
+      const service = createService();
+      const emissions: any[] = [];
+
+      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        next: (d) => emissions.push(d),
+        error: () => {
+          expect(decisions(emissions)).toEqual([
+            { decision: 'PERMIT', resource: '\u00fc\u00e4\u00f6' },
+          ]);
+          done();
+        },
+      });
+    });
+
+    test('whenDeeplyNestedDecisionsThenTreatedAsDifferent', (done) => {
+      function buildNested(leaf: string, depth: number): any {
+        let obj: any = leaf;
+        for (let i = 0; i < depth; i++) {
+          obj = { [`level${i}`]: obj };
+        }
+        return obj;
+      }
+      const deep1 = buildNested('value1', 21);
+      const deep2 = buildNested('value2', 21);
+      const decision1 = { decision: 'PERMIT', obligations: [deep1] };
+      const decision2 = { decision: 'PERMIT', obligations: [deep2] };
+      const stream = createReadableStream([
+        `data: ${JSON.stringify(decision1)}\n\n`,
+        `data: ${JSON.stringify(decision2)}\n\n`,
+      ]);
+      globalThis.fetch = jest.fn().mockResolvedValue(mockFetchResponse(stream));
+
+      const service = createService();
+      const emissions: any[] = [];
+
+      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        next: (d) => emissions.push(d),
+        error: () => {
+          expect(decisions(emissions).length).toBe(2);
+          done();
+        },
+      });
+    });
   });
 
   describe('decide retry', () => {
@@ -611,6 +761,84 @@ describe('PdpService', () => {
       // Advance well past the delay -- no new fetch should happen
       await jest.advanceTimersByTimeAsync(120000);
       expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    test('whenRepeatedStreamFailuresThenLogEscalatesWarnToError', async () => {
+      globalThis.fetch = jest.fn().mockRejectedValue(new Error('Connection refused'));
+
+      const service = createService({
+        streamingMaxRetries: 6,
+        streamingRetryBaseDelay: 100,
+        streamingRetryMaxDelay: 500,
+      });
+      const warnSpy = jest.spyOn((service as any).logger, 'warn');
+      const errorSpy = jest.spyOn((service as any).logger, 'error');
+
+      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        error: () => {},
+      });
+
+      // Advance through all 6 retry attempts
+      for (let i = 0; i < 6; i++) {
+        await jest.advanceTimersByTimeAsync(500);
+        await jest.advanceTimersByTimeAsync(0);
+      }
+      await jest.advanceTimersByTimeAsync(0);
+
+      const warnRetryMessages = warnSpy.mock.calls
+        .map((c) => String(c[0]))
+        .filter((m) => m.includes('reconnecting'));
+      const errorRetryMessages = errorSpy.mock.calls
+        .map((c) => String(c[0]))
+        .filter((m) => m.includes('reconnecting'));
+
+      expect(warnRetryMessages.length).toBeGreaterThan(0);
+      expect(errorRetryMessages.length).toBeGreaterThan(0);
+
+      warnSpy.mockRestore();
+      errorSpy.mockRestore();
+    });
+
+    test('whenAuthErrorOnStreamThenLoggedAtErrorEveryTime', async () => {
+      let fetchCallCount = 0;
+      globalThis.fetch = jest.fn().mockImplementation(() => {
+        fetchCallCount++;
+        const stream = createReadableStream([]);
+        return Promise.resolve({
+          ok: false,
+          status: 401,
+          statusText: 'Unauthorized',
+          body: stream,
+          text: () => Promise.resolve('Unauthorized'),
+          headers: new Headers(),
+        });
+      });
+
+      const service = createService({
+        streamingMaxRetries: 2,
+        streamingRetryBaseDelay: 100,
+        streamingRetryMaxDelay: 500,
+      });
+      const errorSpy = jest.spyOn((service as any).logger, 'error');
+
+      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
+        error: () => {},
+      });
+
+      // Advance through retries
+      for (let i = 0; i < 3; i++) {
+        await jest.advanceTimersByTimeAsync(500);
+        await jest.advanceTimersByTimeAsync(0);
+      }
+      await jest.advanceTimersByTimeAsync(0);
+
+      const authMessages = errorSpy.mock.calls
+        .map((c) => String(c[0]))
+        .filter((m) => m.includes('authentication failed'));
+
+      expect(authMessages.length).toBe(fetchCallCount);
+
+      errorSpy.mockRestore();
     });
   });
 });

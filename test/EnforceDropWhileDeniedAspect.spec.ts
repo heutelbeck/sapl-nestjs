@@ -442,5 +442,77 @@ describe('EnforceDropWhileDeniedAspect', () => {
 
       decisionSubject.error(new Error('pdp error'));
     });
+
+    test('whenOnNextHandlerThrowsThenItemDroppedAndStreamContinues', (done) => {
+      const sourceSubject = new Subject();
+      let callCount = 0;
+      const bundle = createMockStreamingBundle({
+        handleAllOnNextConstraints: jest.fn((v) => {
+          callCount++;
+          if (callCount === 1) throw new Error('onNext failed');
+          return v;
+        }),
+      } as any);
+      (constraintService.streamingBundleFor as jest.Mock).mockReturnValue(bundle);
+      const method = jest.fn().mockReturnValue(sourceSubject.asObservable());
+
+      const wrapped = wrapMethod(method);
+      const emissions: any[] = [];
+
+      wrapped().subscribe({
+        next: (v: any) => emissions.push(v),
+        error: done,
+      });
+
+      decisionSubject.next({ decision: 'PERMIT' });
+      sourceSubject.next({ data: 'fails' });
+      sourceSubject.next({ data: 'succeeds' });
+
+      expect(emissions).toEqual([{ data: 'succeeds' }]);
+      done();
+    });
+
+    test('whenDenyTransitionThenHandlerRefsCleared', (done) => {
+      const sourceSubject = new Subject();
+      const onNextSpy = jest.fn((v: any) => v);
+      const bundle = createMockStreamingBundle({
+        handleAllOnNextConstraints: onNextSpy,
+      } as any);
+      (constraintService.streamingBundleFor as jest.Mock).mockReturnValue(bundle);
+      const bestEffort = createMockStreamingBundle();
+      (constraintService.streamingBestEffortBundleFor as jest.Mock).mockReturnValue(bestEffort);
+      const method = jest.fn().mockReturnValue(sourceSubject.asObservable());
+
+      const wrapped = wrapMethod(method);
+      const emissions: any[] = [];
+
+      wrapped().subscribe({
+        next: (v: any) => emissions.push(v),
+        error: done,
+      });
+
+      decisionSubject.next({ decision: 'PERMIT' });
+      sourceSubject.next('before-deny');
+      decisionSubject.next({ decision: 'DENY' });
+      sourceSubject.next('after-deny');
+
+      expect(emissions).toEqual(['before-deny']);
+      expect(onNextSpy).toHaveBeenCalledTimes(1);
+      done();
+    });
+
+    test('whenUnsubscribedTwiceThenNoError', () => {
+      const method = jest.fn().mockReturnValue(new Subject().asObservable());
+      const bundle = createMockStreamingBundle();
+      (constraintService.streamingBundleFor as jest.Mock).mockReturnValue(bundle);
+
+      const wrapped = wrapMethod(method);
+      const sub = wrapped().subscribe();
+
+      decisionSubject.next({ decision: 'PERMIT' });
+      sub.unsubscribe();
+
+      expect(() => sub.unsubscribe()).not.toThrow();
+    });
   });
 });

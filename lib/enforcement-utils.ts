@@ -7,7 +7,7 @@ export function applyDeny(options: EnforceOptions, ctx: SubscriptionContext, dec
   if (options.onDeny) {
     return options.onDeny(ctx, decision);
   }
-  throw new ForbiddenException('Access denied by policy');
+  throw new ForbiddenException('Access Denied by PDP');
 }
 
 export function handleDeny(

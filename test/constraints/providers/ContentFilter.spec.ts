@@ -397,5 +397,13 @@ describe('ContentFilter', () => {
       });
       expect(() => predicate({ x: 1 })).toThrow("Not a valid predicate condition type: '??'");
     });
+
+    test('whenRegexPatternIsCatastrophicBacktrackingThenRejected', () => {
+      expect(() =>
+        predicateFromConditions({
+          conditions: [{ path: '$.name', type: '=~', value: '(a+)+b' }],
+        }),
+      ).toThrow(/[Uu]nsafe regex/);
+    });
   });
 });
