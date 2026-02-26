@@ -416,11 +416,11 @@ export class HeartbeatService {
 }
 ```
 
-The `onStreamDeny` callback receives the PDP decision and a `StreamEventEmitter`. Calling `emitter.next()` injects an event into the output stream before the stream terminates with a `ForbiddenException`. Calling `emitter.error()` or `emitter.complete()` terminates the stream with a custom error or clean completion instead of the default `ForbiddenException`.
+The `onStreamDeny` callback receives the PDP decision and a restricted emitter. Calling `emitter.next()` injects an event into the output stream before the stream terminates with a `ForbiddenException`.
 
 ### @EnforceDropWhileDenied
 
-Silently drops data during DENY periods. Stream stays alive and resumes forwarding on re-PERMIT. Optionally supports `onStreamDeny` and `onStreamRecover` callbacks for in-band signaling (edge-triggered, same semantics as `@EnforceRecoverableIfDenied`).
+Silently drops data during DENY periods. Stream stays alive and resumes forwarding on re-PERMIT.
 
 ```typescript
 @Injectable()
@@ -428,12 +428,6 @@ export class HeartbeatService {
   @EnforceDropWhileDenied({
     action: 'stream:heartbeat',
     resource: 'heartbeat',
-    onStreamDeny: (decision, emitter) => {
-      emitter.next({ data: JSON.stringify({ type: 'PAUSED' }) });
-    },
-    onStreamRecover: (decision, emitter) => {
-      emitter.next({ data: JSON.stringify({ type: 'RESUMED' }) });
-    },
   })
   heartbeat(): Observable<any> {
     return interval(2000).pipe(
@@ -443,7 +437,7 @@ export class HeartbeatService {
 }
 ```
 
-Without callbacks, `@EnforceDropWhileDenied` behaves identically to before -- data is silently dropped during DENY periods with no signals to the client.
+Data is silently dropped during DENY periods with no signals to the client. If you need deny/recover signals, use `@EnforceRecoverableIfDenied` instead.
 
 ### @EnforceRecoverableIfDenied
 
@@ -469,28 +463,6 @@ export class HeartbeatService {
   }
 }
 ```
-
-### Stream Termination from Callbacks
-
-All streaming callbacks receive a `StreamEventEmitter` with `next()`, `error()`, and `complete()`. Calling `error()` or `complete()` from within a callback terminates the stream immediately. After termination, all further emissions, decisions, and callbacks are no-ops.
-
-This is useful when a callback wants to override the default behavior:
-
-- **`@EnforceTillDenied`**: Default behavior is `ForbiddenException`. Calling `emitter.error(customError)` sends your error instead. Calling `emitter.complete()` completes the stream cleanly instead of erroring.
-- **`@EnforceDropWhileDenied`** / **`@EnforceRecoverableIfDenied`**: Default behavior keeps the stream alive. Calling `emitter.error()` or `emitter.complete()` terminates it.
-
-```typescript
-@EnforceRecoverableIfDenied({
-  action: 'stream:heartbeat',
-  resource: 'heartbeat',
-  onStreamDeny: (decision, emitter) => {
-    emitter.next({ data: JSON.stringify({ type: 'GOODBYE' }) });
-    emitter.error(new ForbiddenException('Callback terminated stream'));
-  },
-})
-```
-
-You can call `emitter.next()` before `emitter.error()`/`emitter.complete()` to inject a final event. After `error()` or `complete()`, subsequent `next()` calls are silently ignored.
 
 ### Decision Lifecycle
 
