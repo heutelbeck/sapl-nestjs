@@ -396,7 +396,7 @@ describe('PdpService', () => {
         error: () => {
           const [, init] = (globalThis.fetch as jest.Mock).mock.calls[0];
           expect(init.headers['Authorization']).toBe('Bearer my-token');
-          expect(init.headers['Accept']).toBe('application/x-ndjson');
+          expect(init.headers['Accept']).toBe('text/event-stream');
           done();
         },
       });

@@ -196,7 +196,7 @@ describe('EnforceTillDeniedAspect', () => {
       decisionSubject.next({ decision: 'DENY' });
     });
 
-    test('whenDenyWithOnStreamDenyCallbackThenCallbackReceivesDecisionAndSubscriber', (done) => {
+    test('whenDenyWithOnStreamDenyCallbackThenCallbackReceivesDecisionAndRestrictedEmitter', (done) => {
       const onStreamDeny = jest.fn();
       const bestEffortBundle = createMockStreamingBundle();
       (constraintService.streamingBestEffortBundleFor as jest.Mock).mockReturnValue(bestEffortBundle);
@@ -208,8 +208,13 @@ describe('EnforceTillDeniedAspect', () => {
         error: () => {
           expect(onStreamDeny).toHaveBeenCalledWith(
             { decision: 'DENY' },
-            expect.objectContaining({ next: expect.any(Function) }),
+            expect.objectContaining({
+              next: expect.any(Function),
+            }),
           );
+          const emitter = onStreamDeny.mock.calls[0][1];
+          expect(emitter.error).toBeUndefined();
+          expect(emitter.complete).toBeUndefined();
           done();
         },
       });
@@ -439,6 +444,71 @@ describe('EnforceTillDeniedAspect', () => {
 
       decisionSubject.next({ decision: 'PERMIT' });
       sourceSubject.complete();
+    });
+  });
+
+  // SECURITY REQUIREMENT: Immediate Decision Enforcement
+  //
+  // When a new PDP decision arrives on a streaming subscription, enforcement
+  // MUST take effect immediately -- not deferred to the next payload from the
+  // protected source stream. Deferring enforcement to the next source emission
+  // introduces an uncontrollable delay and creates a timing side-channel: an
+  // observer can correlate the cessation of data with the source's emission
+  // pattern, leaking information about a resource the user no longer has access
+  // to. For EnforceTillDenied, this means subscriber.error() MUST fire in the
+  // decision handler, before any further source emissions are processed.
+  describe('immediate decision enforcement', () => {
+    test('whenDenyArrivesBeforeSourceEmitsThenSubscriberErrorsImmediately', (done) => {
+      const sourceSubject = new Subject();
+      const bundle = createMockStreamingBundle();
+      const bestEffortBundle = createMockStreamingBundle();
+      (constraintService.streamingBundleFor as jest.Mock).mockReturnValue(bundle);
+      (constraintService.streamingBestEffortBundleFor as jest.Mock).mockReturnValue(bestEffortBundle);
+      const method = jest.fn().mockReturnValue(sourceSubject.asObservable());
+
+      const wrapped = wrapMethod(method);
+      let errorReceived = false;
+
+      wrapped().subscribe({
+        error: (err: any) => {
+          expect(err).toBeInstanceOf(ForbiddenException);
+          errorReceived = true;
+        },
+      });
+
+      decisionSubject.next({ decision: 'PERMIT' });
+      decisionSubject.next({ decision: 'DENY' });
+
+      // Error must have been received synchronously in the decision handler,
+      // before any source emission could trigger it
+      expect(errorReceived).toBe(true);
+      done();
+    });
+
+    test('whenDenyArrivesAfterPermitThenNoFurtherSourceDataProcessed', (done) => {
+      const sourceSubject = new Subject();
+      const bundle = createMockStreamingBundle();
+      const bestEffortBundle = createMockStreamingBundle();
+      (constraintService.streamingBundleFor as jest.Mock).mockReturnValue(bundle);
+      (constraintService.streamingBestEffortBundleFor as jest.Mock).mockReturnValue(bestEffortBundle);
+      const method = jest.fn().mockReturnValue(sourceSubject.asObservable());
+
+      const wrapped = wrapMethod(method);
+      const emissions: any[] = [];
+
+      wrapped().subscribe({
+        next: (v: any) => emissions.push(v),
+        error: () => {
+          // After error, source emissions must not be processed
+          sourceSubject.next({ data: 'after-error' });
+          expect(emissions).toEqual([{ data: 'before-deny' }]);
+          done();
+        },
+      });
+
+      decisionSubject.next({ decision: 'PERMIT' });
+      sourceSubject.next({ data: 'before-deny' });
+      decisionSubject.next({ decision: 'DENY' });
     });
   });
 

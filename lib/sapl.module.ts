@@ -13,12 +13,14 @@ import { EnforceRecoverableIfDeniedAspect } from './EnforceRecoverableIfDeniedAs
 import { ConstraintEnforcementService } from './constraints/ConstraintEnforcementService';
 import { ContentFilteringProvider } from './constraints/providers/ContentFilteringProvider';
 import { ContentFilterPredicateProvider } from './constraints/providers/ContentFilterPredicateProvider';
+import { SaplTransactionAdapter } from './SaplTransactionAdapter';
 
 const SHARED_PROVIDERS = [
   PdpService,
   ConstraintEnforcementService,
   ContentFilteringProvider,
   ContentFilterPredicateProvider,
+  SaplTransactionAdapter,
   PreEnforceAspect,
   PostEnforceAspect,
   EnforceTillDeniedAspect,

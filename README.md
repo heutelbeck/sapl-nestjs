@@ -38,7 +38,7 @@ npm install @sapl/nestjs @toss/nestjs-aop nestjs-cls
 
 ## Setup
 
-### Direct Configuration
+### Direct Configuration (API Key)
 
 ```typescript
 import { Module } from '@nestjs/common';
@@ -48,13 +48,30 @@ import { SaplModule } from '@sapl/nestjs';
   imports: [
     SaplModule.forRoot({
       baseUrl: 'https://localhost:8443',
-      token: 'sapl_your_token_here',
+      token: 'sapl_your_api_key_here',
       timeout: 5000, // PDP request timeout in ms (default: 5000)
     }),
   ],
 })
 export class AppModule {}
 ```
+
+### Direct Configuration (Basic Auth)
+
+```typescript
+@Module({
+  imports: [
+    SaplModule.forRoot({
+      baseUrl: 'https://localhost:8443',
+      username: 'myPdpClient',
+      secret: 'myPassword',
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+`token` (API key or JWT) and `username`/`secret` (Basic Auth) are mutually exclusive -- configure one or the other. Providing both throws an error at startup.
 
 ### Async Configuration
 
@@ -111,7 +128,7 @@ PDP responses are validated before use. Malformed responses (non-object, missing
 
 ### Streaming Limits
 
-The streaming NDJSON parser enforces a 1 MB buffer limit per connection. If the PDP sends data without newline delimiters exceeding this limit, the connection is aborted and an `INDETERMINATE` decision is emitted. This protects against memory exhaustion from misbehaving upstream connections.
+The streaming SSE parser enforces a 1 MB buffer limit per connection. If the PDP sends data without newline delimiters exceeding this limit, the connection is aborted and an `INDETERMINATE` decision is emitted. This protects against memory exhaustion from misbehaving upstream connections.
 
 ## Decorators
 
@@ -399,11 +416,11 @@ export class HeartbeatService {
 }
 ```
 
-The `onStreamDeny` callback receives the PDP decision and the RxJS `Subscriber`. Calling `subscriber.next()` injects an event into the output stream before the stream terminates with a `ForbiddenException`.
+The `onStreamDeny` callback receives the PDP decision and a `StreamEventEmitter`. Calling `emitter.next()` injects an event into the output stream before the stream terminates with a `ForbiddenException`. Calling `emitter.error()` or `emitter.complete()` terminates the stream with a custom error or clean completion instead of the default `ForbiddenException`.
 
 ### @EnforceDropWhileDenied
 
-Silently drops data during DENY periods. Stream stays alive and resumes forwarding on re-PERMIT. No deny/recover callbacks -- data is simply not forwarded while denied.
+Silently drops data during DENY periods. Stream stays alive and resumes forwarding on re-PERMIT. Optionally supports `onStreamDeny` and `onStreamRecover` callbacks for in-band signaling (edge-triggered, same semantics as `@EnforceRecoverableIfDenied`).
 
 ```typescript
 @Injectable()
@@ -411,6 +428,12 @@ export class HeartbeatService {
   @EnforceDropWhileDenied({
     action: 'stream:heartbeat',
     resource: 'heartbeat',
+    onStreamDeny: (decision, emitter) => {
+      emitter.next({ data: JSON.stringify({ type: 'PAUSED' }) });
+    },
+    onStreamRecover: (decision, emitter) => {
+      emitter.next({ data: JSON.stringify({ type: 'RESUMED' }) });
+    },
   })
   heartbeat(): Observable<any> {
     return interval(2000).pipe(
@@ -419,6 +442,8 @@ export class HeartbeatService {
   }
 }
 ```
+
+Without callbacks, `@EnforceDropWhileDenied` behaves identically to before -- data is silently dropped during DENY periods with no signals to the client.
 
 ### @EnforceRecoverableIfDenied
 
@@ -444,6 +469,28 @@ export class HeartbeatService {
   }
 }
 ```
+
+### Stream Termination from Callbacks
+
+All streaming callbacks receive a `StreamEventEmitter` with `next()`, `error()`, and `complete()`. Calling `error()` or `complete()` from within a callback terminates the stream immediately. After termination, all further emissions, decisions, and callbacks are no-ops.
+
+This is useful when a callback wants to override the default behavior:
+
+- **`@EnforceTillDenied`**: Default behavior is `ForbiddenException`. Calling `emitter.error(customError)` sends your error instead. Calling `emitter.complete()` completes the stream cleanly instead of erroring.
+- **`@EnforceDropWhileDenied`** / **`@EnforceRecoverableIfDenied`**: Default behavior keeps the stream alive. Calling `emitter.error()` or `emitter.complete()` terminates it.
+
+```typescript
+@EnforceRecoverableIfDenied({
+  action: 'stream:heartbeat',
+  resource: 'heartbeat',
+  onStreamDeny: (decision, emitter) => {
+    emitter.next({ data: JSON.stringify({ type: 'GOODBYE' }) });
+    emitter.error(new ForbiddenException('Callback terminated stream'));
+  },
+})
+```
+
+You can call `emitter.next()` before `emitter.error()`/`emitter.complete()` to inject a final event. After `error()` or `complete()`, subsequent `next()` calls are silently ignored.
 
 ### Decision Lifecycle
 
@@ -493,6 +540,62 @@ export class AppController {
 }
 ```
 
+### Multi-Subscription API
+
+When you need authorization decisions for multiple resources in a single request, use the multi-subscription methods instead of calling `decideOnce` in a loop.
+
+#### One-Shot (multiDecideAllOnce)
+
+Returns a snapshot mapping each subscription ID to its decision:
+
+```typescript
+const result = await this.pdpService.multiDecideAllOnce({
+  subscriptions: {
+    readPatient: { subject: req.user, action: 'read', resource: 'patient' },
+    readLab: { subject: req.user, action: 'read', resource: 'labResults' },
+    readNotes: { subject: req.user, action: 'read', resource: 'clinicalNotes' },
+  },
+});
+
+// result.decisions['readPatient'].decision === 'PERMIT'
+// result.decisions['readLab'].decision === 'DENY'
+// result.decisions['readNotes'].decision === 'PERMIT'
+```
+
+#### Streaming Individual Decisions (multiDecide)
+
+Emits an `IdentifiableAuthorizationDecision` each time an individual subscription's decision changes:
+
+```typescript
+this.pdpService.multiDecide({
+  subscriptions: {
+    readPatient: { subject: req.user, action: 'read', resource: 'patient' },
+    readLab: { subject: req.user, action: 'read', resource: 'labResults' },
+  },
+}).subscribe((event) => {
+  // event.subscriptionId === 'readPatient'
+  // event.decision.decision === 'PERMIT'
+});
+```
+
+#### Streaming Complete Snapshots (multiDecideAll)
+
+Emits a `MultiAuthorizationDecision` containing all current decisions whenever any individual decision changes:
+
+```typescript
+this.pdpService.multiDecideAll({
+  subscriptions: {
+    readPatient: { subject: req.user, action: 'read', resource: 'patient' },
+    readLab: { subject: req.user, action: 'read', resource: 'labResults' },
+  },
+}).subscribe((snapshot) => {
+  // snapshot.decisions['readPatient'].decision === 'PERMIT'
+  // snapshot.decisions['readLab'].decision === 'DENY'
+});
+```
+
+Both streaming methods reconnect with exponential backoff on connection loss and suppress consecutive duplicate events.
+
 ## Advanced Configuration
 
 ### Using nestjs-cls (Continuation-Local Storage) in Your Application
@@ -521,6 +624,96 @@ SaplModule.forRoot({
 
 The `cls` options are merged into the default configuration (`{ global: true, middleware: { mount: true } }`), so you only need to specify the parts you want to customize.
 
+### Transaction Integration
+
+#### The Problem
+
+When `@PreEnforce` and a database transaction coexist on a method, the transaction typically commits inside the method body. SAPL's post-method constraint handlers (`handleAllOnNextConstraints`) run after the method returns. If a constraint handler fails at that point, the transaction has already committed and cannot be rolled back.
+
+The same problem applies to `@PostEnforce` -- the method executes (and commits its transaction) before the PDP even makes its authorization decision. A subsequent DENY cannot undo committed database writes.
+
+#### The Solution
+
+Set `transactional: true` in `SaplModule.forRoot()`. When enabled, `@PreEnforce` and `@PostEnforce` wrap method execution and constraint handling in a single database transaction via `@nestjs-cls/transactional`. Any constraint failure, method error, or DENY decision triggers a rollback.
+
+```bash
+npm install @nestjs-cls/transactional @nestjs-cls/transactional-adapter-typeorm
+```
+
+```typescript
+import { Module } from '@nestjs/common';
+import { SaplModule } from '@sapl/nestjs';
+import { ClsPluginTransactional } from '@nestjs-cls/transactional';
+import { TransactionalAdapterTypeOrm } from '@nestjs-cls/transactional-adapter-typeorm';
+
+@Module({
+  imports: [
+    TypeOrmModule.forRoot({ /* ... */ }),
+    SaplModule.forRoot({
+      baseUrl: 'https://localhost:8443',
+      token: 'sapl_api_key',
+      transactional: true,
+      cls: {
+        plugins: [
+          new ClsPluginTransactional({
+            imports: [TypeOrmModule],
+            adapter: new TransactionalAdapterTypeOrm({ dataSourceName: 'default' }),
+          }),
+        ],
+      },
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+For Prisma, replace the adapter:
+
+```bash
+npm install @nestjs-cls/transactional @nestjs-cls/transactional-adapter-prisma
+```
+
+```typescript
+cls: {
+  plugins: [
+    new ClsPluginTransactional({
+      imports: [PrismaModule],
+      adapter: new TransactionalAdapterPrisma({ prismaInjectionToken: PrismaService }),
+    }),
+  ],
+},
+```
+
+#### What Gets Wrapped
+
+| Decorator | Without `transactional` | With `transactional: true` |
+|-----------|------------------------|---------------------------|
+| `@PreEnforce` | Phase 1 (pre-method handlers) runs outside any transaction. Phase 2 (method) and Phase 3 (post-method handlers) run independently. | Phase 2 + Phase 3 are wrapped in `withTransaction()`. Constraint failure after method execution triggers rollback. |
+| `@PostEnforce` | Method runs first, then PDP check, then constraint handlers. Each step is independent. | The entire sequence (method + PDP check + constraint handling) runs in a single transaction. A DENY after method execution triggers rollback. |
+
+#### Manual Alternative: Decorator Ordering
+
+If you cannot use `@nestjs-cls/transactional`, ensure `@Transactional()` is applied above the enforcement decorator so the transaction boundary wraps the entire enforcement lifecycle:
+
+```typescript
+@Transactional()    // outer: starts transaction
+@PreEnforce()       // inner: method + constraints run inside the transaction
+@Post('transfer')
+transfer(@Body() dto: TransferDto) {
+  return this.accountService.transfer(dto);
+}
+```
+
+NestJS decorators execute bottom-up, so `@PreEnforce` runs first (inside the transaction started by `@Transactional`).
+
+#### Limitation: Callback-Based Transactions
+
+Methods that manage their own transaction via callback APIs (`prisma.$transaction(async (tx) => ...)`, `queryRunner.startTransaction()`) are not affected by `transactional: true`. The SAPL transaction wrapper and the method's internal transaction are independent. Use the decorator-based approach or restructure to use `@nestjs-cls/transactional`'s `TransactionHost` instead.
+
+#### Runtime Warning
+
+If `transactional: true` is set but `@nestjs-cls/transactional` is not installed or `ClsPluginTransactional` is not registered, `SaplTransactionAdapter` logs a warning at first request time and falls back to non-transactional execution.
+
 ## Troubleshooting
 
 | Symptom | Likely Cause | Fix |
@@ -532,7 +725,7 @@ The `cls` options are merged into the default configuration (`{ global: true, mi
 | Content filter throws | Unsupported JSONPath | Only simple dot paths supported (`$.field.nested`) |
 | CLS context missing | Module order | Ensure `SaplModule` is imported before modules that use it |
 | `allowInsecureConnections` error | `baseUrl` uses HTTP | Use HTTPS or set `allowInsecureConnections: true` for development |
-| Streaming buffer overflow | PDP proxy injecting data | Check network path to PDP; 1 MB buffer limit per NDJSON line |
+| Streaming buffer overflow | PDP proxy injecting data | Check network path to PDP; 1 MB buffer limit per SSE line |
 
 ## License
 

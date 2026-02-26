@@ -2,7 +2,7 @@ import { ForbiddenException } from '@nestjs/common';
 import { PostEnforceAspect } from '../lib/PostEnforceAspect';
 import { PdpService } from '../lib/pdp.service';
 import { ConstraintEnforcementService } from '../lib/constraints/ConstraintEnforcementService';
-import { createMockBundle, createMockClsService } from './test-helpers';
+import { createMockBundle, createMockClsService, createMockTransactionAdapter } from './test-helpers';
 
 describe('PostEnforceAspect', () => {
   let pdpService: Partial<PdpService>;
@@ -21,6 +21,7 @@ describe('PostEnforceAspect', () => {
       pdpService as PdpService,
       clsMock as any,
       constraintService as ConstraintEnforcementService,
+      createMockTransactionAdapter(false) as any,
     );
   });
 
@@ -232,6 +233,66 @@ describe('PostEnforceAspect', () => {
       const wrapped = wrapMethod(method);
       await expect(wrapped()).rejects.toThrow(ForbiddenException);
       expect(method).toHaveBeenCalled();
+    });
+  });
+
+  describe('transaction integration', () => {
+    let txAdapter: ReturnType<typeof createMockTransactionAdapter>;
+
+    beforeEach(() => {
+      txAdapter = createMockTransactionAdapter(true);
+      aspect = new PostEnforceAspect(
+        pdpService as PdpService,
+        clsMock as any,
+        constraintService as ConstraintEnforcementService,
+        txAdapter as any,
+      );
+    });
+
+    test('whenTransactionalAndDenyThenExceptionPropagatesThroughTransaction', async () => {
+      (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'DENY' });
+      const bundle = createMockBundle();
+      (constraintService.bestEffortBundleFor as jest.Mock).mockReturnValue(bundle);
+      const method = jest.fn().mockResolvedValue({ data: 'result' });
+
+      const wrapped = wrapMethod(method);
+      await expect(wrapped()).rejects.toThrow(ForbiddenException);
+      expect(txAdapter.withTransaction).toHaveBeenCalled();
+      expect(method).toHaveBeenCalled();
+    });
+
+    test('whenTransactionalAndPermitWithConstraintFailureThenExceptionPropagatesThroughTransaction', async () => {
+      (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
+      const bundle = createMockBundle({
+        handleAllOnNextConstraints: jest.fn(() => { throw new Error('constraint failed'); }),
+        handleAllOnErrorConstraints: jest.fn((e) => e),
+      } as any);
+      (constraintService.postEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
+      const method = jest.fn().mockResolvedValue({ data: 'result' });
+
+      const wrapped = wrapMethod(method);
+      await expect(wrapped()).rejects.toThrow(ForbiddenException);
+      expect(txAdapter.withTransaction).toHaveBeenCalled();
+    });
+
+    test('whenNotTransactionalThenWithTransactionNotCalled', async () => {
+      const inactiveAdapter = createMockTransactionAdapter(false);
+      aspect = new PostEnforceAspect(
+        pdpService as PdpService,
+        clsMock as any,
+        constraintService as ConstraintEnforcementService,
+        inactiveAdapter as any,
+      );
+
+      (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
+      const bundle = createMockBundle();
+      (constraintService.postEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
+      const method = jest.fn().mockResolvedValue({ data: 'ok' });
+
+      const wrapped = wrapMethod(method);
+      await wrapped();
+
+      expect(inactiveAdapter.withTransaction).not.toHaveBeenCalled();
     });
   });
 });

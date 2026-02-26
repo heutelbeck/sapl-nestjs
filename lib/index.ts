@@ -2,9 +2,17 @@
 export { SaplModule } from './sapl.module';
 export { SAPL_MODULE_OPTIONS } from './sapl.constants';
 export { SaplModuleOptions, SaplModuleAsyncOptions } from './sapl.interfaces';
+export { SaplTransactionAdapter } from './SaplTransactionAdapter';
 
 // Types
-export { Decision, AuthorizationDecision, AuthorizationSubscription } from './types';
+export {
+  Decision,
+  AuthorizationDecision,
+  AuthorizationSubscription,
+  MultiAuthorizationSubscription,
+  IdentifiableAuthorizationDecision,
+  MultiAuthorizationDecision,
+} from './types';
 
 // PDP
 export { PdpService } from './pdp.service';
@@ -24,6 +32,7 @@ export {
   OnDenyHandler,
 } from './EnforceOptions';
 export {
+  RestrictedStreamEventEmitter,
   StreamEventEmitter,
   EnforceTillDeniedOptions,
   EnforceDropWhileDeniedOptions,
@@ -31,6 +40,7 @@ export {
   OnStreamDenyHandler,
   OnStreamRecoverHandler,
 } from './StreamingEnforceOptions';
+export { StreamingEnforcementConfig, createStreamingEnforcement } from './StreamingEnforcementCore';
 export { SaplRequest, SubscriptionContext } from './SubscriptionContext';
 export { MethodInvocationContext } from './MethodInvocationContext';
 

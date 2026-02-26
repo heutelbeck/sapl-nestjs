@@ -28,3 +28,29 @@ export interface AuthorizationSubscription {
   environment?: unknown;
   secrets?: unknown;
 }
+
+/**
+ * Multiple authorization subscriptions keyed by client-chosen IDs.
+ * Sent to the PDP multi-subscription endpoints for batch authorization.
+ */
+export interface MultiAuthorizationSubscription {
+  subscriptions: Record<string, AuthorizationSubscription>;
+}
+
+/**
+ * A single authorization decision tagged with its subscription ID.
+ * Returned by the multi-decide endpoint where decisions arrive individually.
+ */
+export interface IdentifiableAuthorizationDecision {
+  subscriptionId: string;
+  decision: AuthorizationDecision;
+}
+
+/**
+ * A complete snapshot of all subscription decisions.
+ * Returned by the multi-decide-all endpoint. Emitted whenever any
+ * individual decision changes, always containing all current decisions.
+ */
+export interface MultiAuthorizationDecision {
+  decisions: Record<string, AuthorizationDecision>;
+}

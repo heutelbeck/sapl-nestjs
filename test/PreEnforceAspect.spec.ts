@@ -2,7 +2,7 @@ import { ForbiddenException } from '@nestjs/common';
 import { PreEnforceAspect } from '../lib/PreEnforceAspect';
 import { PdpService } from '../lib/pdp.service';
 import { ConstraintEnforcementService } from '../lib/constraints/ConstraintEnforcementService';
-import { createMockBundle, createMockClsService } from './test-helpers';
+import { createMockBundle, createMockClsService, createMockTransactionAdapter } from './test-helpers';
 
 describe('PreEnforceAspect', () => {
   let pdpService: Partial<PdpService>;
@@ -21,6 +21,7 @@ describe('PreEnforceAspect', () => {
       pdpService as PdpService,
       clsMock as any,
       constraintService as ConstraintEnforcementService,
+      createMockTransactionAdapter(false) as any,
     );
   });
 
@@ -334,6 +335,80 @@ describe('PreEnforceAspect', () => {
       const wrapped = wrapMethod(method);
       await expect(wrapped()).rejects.toThrow(ForbiddenException);
       expect(method).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('transaction integration', () => {
+    let txAdapter: ReturnType<typeof createMockTransactionAdapter>;
+
+    beforeEach(() => {
+      txAdapter = createMockTransactionAdapter(true);
+      aspect = new PreEnforceAspect(
+        pdpService as PdpService,
+        clsMock as any,
+        constraintService as ConstraintEnforcementService,
+        txAdapter as any,
+      );
+    });
+
+    test('whenTransactionalAndPermitThenWithTransactionCalled', async () => {
+      (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
+      const bundle = createMockBundle();
+      (constraintService.preEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
+      const method = jest.fn().mockResolvedValue({ data: 'ok' });
+
+      const wrapped = wrapMethod(method);
+      const result = await wrapped();
+
+      expect(result).toEqual({ data: 'ok' });
+      expect(txAdapter.withTransaction).toHaveBeenCalled();
+    });
+
+    test('whenTransactionalAndConstraintFailsThenExceptionPropagatesThroughTransaction', async () => {
+      (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
+      const bundle = createMockBundle({
+        handleAllOnNextConstraints: jest.fn(() => { throw new Error('constraint failed'); }),
+      } as any);
+      (constraintService.preEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
+      const method = jest.fn().mockResolvedValue({ data: 'ok' });
+
+      const wrapped = wrapMethod(method);
+      await expect(wrapped()).rejects.toThrow(ForbiddenException);
+      expect(txAdapter.withTransaction).toHaveBeenCalled();
+    });
+
+    test('whenTransactionalAndMethodThrowsThenErrorPropagatesThroughTransaction', async () => {
+      (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
+      const mappedError = new Error('mapped');
+      const bundle = createMockBundle({
+        handleAllOnErrorConstraints: jest.fn(() => mappedError),
+      } as any);
+      (constraintService.preEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
+      const method = jest.fn().mockRejectedValue(new Error('method failed'));
+
+      const wrapped = wrapMethod(method);
+      await expect(wrapped()).rejects.toBe(mappedError);
+      expect(txAdapter.withTransaction).toHaveBeenCalled();
+    });
+
+    test('whenNotTransactionalThenWithTransactionNotCalled', async () => {
+      const inactiveAdapter = createMockTransactionAdapter(false);
+      aspect = new PreEnforceAspect(
+        pdpService as PdpService,
+        clsMock as any,
+        constraintService as ConstraintEnforcementService,
+        inactiveAdapter as any,
+      );
+
+      (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
+      const bundle = createMockBundle();
+      (constraintService.preEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
+      const method = jest.fn().mockResolvedValue({ data: 'ok' });
+
+      const wrapped = wrapMethod(method);
+      await wrapped();
+
+      expect(inactiveAdapter.withTransaction).not.toHaveBeenCalled();
     });
   });
 });

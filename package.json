@@ -1,9 +1,17 @@
 {
   "name": "@sapl/nestjs",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "SAPL authorization for NestJS - ABAC with constraint handling",
   "author": "Dominic Heutelbeck",
-  "keywords": ["sapl", "nestjs", "abac", "authorization", "policy", "access-control", "streaming"],
+  "keywords": [
+    "sapl",
+    "nestjs",
+    "abac",
+    "authorization",
+    "policy",
+    "access-control",
+    "streaming"
+  ],
   "homepage": "https://github.com/heutelbeck/sapl-nestjs#readme",
   "bugs": {
     "url": "https://github.com/heutelbeck/sapl-nestjs/issues"
@@ -28,12 +36,18 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
+    "@nestjs-cls/transactional": ">=2.0.0",
     "@nestjs/common": "^11.0.0",
     "@nestjs/core": "^11.0.0",
     "@toss/nestjs-aop": "^2.1.0",
     "nestjs-cls": "^6.0.0",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@nestjs-cls/transactional": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@nestjs/common": "^11.0.0",
@@ -62,6 +76,7 @@
     "url": "https://github.com/heutelbeck/sapl-nestjs"
   },
   "dependencies": {
+    "@sapl/nestjs": "file:sapl-nestjs-1.0.1.tgz",
     "safe-regex2": "^5.0.0"
   }
 }

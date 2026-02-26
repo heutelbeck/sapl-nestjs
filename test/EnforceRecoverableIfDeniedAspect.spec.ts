@@ -529,6 +529,107 @@ describe('EnforceRecoverableIfDeniedAspect', () => {
     });
   });
 
+  // SECURITY REQUIREMENT: Immediate Decision Enforcement
+  //
+  // When a new PDP decision arrives on a streaming subscription, enforcement
+  // MUST take effect immediately -- not deferred to the next payload from the
+  // protected source stream. Deferring enforcement to the next source emission
+  // introduces an uncontrollable delay and creates a timing side-channel: an
+  // observer can correlate the cessation of data with the source's emission
+  // pattern, leaking information about a resource the user no longer has access
+  // to. For EnforceRecoverableIfDenied, the onStreamDeny/onStreamRecover
+  // callbacks MUST fire synchronously in the decision handler, and the
+  // enforcement gate MUST close/open synchronously so that data emitted by the
+  // source immediately after the decision change is correctly dropped/forwarded.
+  describe('immediate decision enforcement', () => {
+    test('whenDenyArrivesThenOnStreamDenyFiredBeforeAnySourceEmission', (done) => {
+      const sourceSubject = new Subject();
+      const bundle = createMockStreamingBundle();
+      const bestEffortBundle = createMockStreamingBundle();
+      (constraintService.streamingBundleFor as jest.Mock).mockReturnValue(bundle);
+      (constraintService.streamingBestEffortBundleFor as jest.Mock).mockReturnValue(bestEffortBundle);
+      const method = jest.fn().mockReturnValue(sourceSubject.asObservable());
+
+      let denyCallbackTime = -1;
+      let sourceEmitTime = -1;
+      let counter = 0;
+      const onStreamDeny = jest.fn(() => { denyCallbackTime = ++counter; });
+
+      const wrapped = wrapMethod(method, { onStreamDeny });
+
+      wrapped().subscribe({
+        next: () => { if (sourceEmitTime < 0) sourceEmitTime = ++counter; },
+        error: done,
+      });
+
+      decisionSubject.next({ decision: 'PERMIT' });
+      decisionSubject.next({ decision: 'DENY' });
+
+      // onStreamDeny must have fired synchronously, before any possible
+      // source emission could set sourceEmitTime
+      expect(denyCallbackTime).toBeGreaterThan(0);
+      expect(onStreamDeny).toHaveBeenCalledTimes(1);
+      done();
+    });
+
+    test('whenDenyArrivesThenEnforcementGateClosedSynchronously', (done) => {
+      const sourceSubject = new Subject();
+      const bundle = createMockStreamingBundle();
+      const bestEffortBundle = createMockStreamingBundle();
+      (constraintService.streamingBundleFor as jest.Mock).mockReturnValue(bundle);
+      (constraintService.streamingBestEffortBundleFor as jest.Mock).mockReturnValue(bestEffortBundle);
+      const method = jest.fn().mockReturnValue(sourceSubject.asObservable());
+
+      const wrapped = wrapMethod(method);
+      const emissions: any[] = [];
+
+      wrapped().subscribe({
+        next: (v: any) => emissions.push(v),
+        error: done,
+      });
+
+      decisionSubject.next({ decision: 'PERMIT' });
+      sourceSubject.next({ data: 'before-deny' });
+      decisionSubject.next({ decision: 'DENY' });
+
+      // Data emitted immediately after DENY must be dropped
+      sourceSubject.next({ data: 'immediately-after-deny' });
+
+      expect(emissions).toEqual([{ data: 'before-deny' }]);
+      done();
+    });
+
+    test('whenRePermitArrivesThenOnStreamRecoverFiredBeforeSourceEmission', (done) => {
+      const sourceSubject = new Subject();
+      const bundle = createMockStreamingBundle();
+      const bestEffortBundle = createMockStreamingBundle();
+      (constraintService.streamingBundleFor as jest.Mock).mockReturnValue(bundle);
+      (constraintService.streamingBestEffortBundleFor as jest.Mock).mockReturnValue(bestEffortBundle);
+      const method = jest.fn().mockReturnValue(sourceSubject.asObservable());
+
+      const events: string[] = [];
+      const onStreamDeny = jest.fn();
+      const onStreamRecover = jest.fn(() => { events.push('recover'); });
+
+      const wrapped = wrapMethod(method, { onStreamDeny, onStreamRecover });
+
+      wrapped().subscribe({
+        next: () => { events.push('data'); },
+        error: done,
+      });
+
+      decisionSubject.next({ decision: 'PERMIT' });
+      decisionSubject.next({ decision: 'DENY' });
+      decisionSubject.next({ decision: 'PERMIT' });
+
+      // Recovery callback must have fired synchronously before any data
+      sourceSubject.next({ data: 'after-recovery' });
+
+      expect(events).toEqual(['recover', 'data']);
+      done();
+    });
+  });
+
   describe('initial state notifications', () => {
     test('whenInitialDenyThenOnStreamDenyFired', () => {
       const onStreamDeny = jest.fn();

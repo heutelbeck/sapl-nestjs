@@ -9,6 +9,7 @@ import { buildContext, buildSubscriptionFromContext } from './SubscriptionBuilde
 import { SubscriptionContext } from './SubscriptionContext';
 import { ConstraintEnforcementService } from './constraints/ConstraintEnforcementService';
 import { handleDeny, applyDeny } from './enforcement-utils';
+import { SaplTransactionAdapter } from './SaplTransactionAdapter';
 
 @Aspect(PRE_ENFORCE_SYMBOL)
 export class PreEnforceAspect implements LazyDecorator<any, EnforceOptions> {
@@ -18,6 +19,7 @@ export class PreEnforceAspect implements LazyDecorator<any, EnforceOptions> {
     private readonly pdpService: PdpService,
     private readonly cls: ClsService,
     private readonly constraintService: ConstraintEnforcementService,
+    private readonly transactionAdapter: SaplTransactionAdapter,
   ) {}
 
   wrap({ method, metadata, methodName, instance }: WrapParams<any, EnforceOptions>) {
@@ -71,6 +73,26 @@ export class PreEnforceAspect implements LazyDecorator<any, EnforceOptions> {
     } catch (error) {
       this.logger.warn(`Obligation handling failed on PERMIT: ${error}`);
       return applyDeny(options, ctx, decision);
+    }
+
+    // When transactional, wrap Phase 2 + Phase 3 so any failure triggers rollback
+    if (this.transactionAdapter.isActive) {
+      return this.transactionAdapter.withTransaction(async () => {
+        let result;
+        try {
+          result = await method(...invocationContext.args);
+        } catch (methodError) {
+          throw bundle.handleAllOnErrorConstraints(
+            methodError instanceof Error ? methodError : new Error(String(methodError)),
+          );
+        }
+        try {
+          return bundle.handleAllOnNextConstraints(result);
+        } catch (obligationError) {
+          this.logger.warn(`Obligation handling failed on PERMIT: ${obligationError}`);
+          return applyDeny(options, ctx, decision);
+        }
+      });
     }
 
     // Phase 2: method execution -- errors propagate after error handler mapping

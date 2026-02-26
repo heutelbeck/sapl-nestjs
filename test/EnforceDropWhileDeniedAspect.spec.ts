@@ -330,6 +330,84 @@ describe('EnforceDropWhileDeniedAspect', () => {
     });
   });
 
+  // SECURITY REQUIREMENT: Immediate Decision Enforcement
+  //
+  // When a new PDP decision arrives on a streaming subscription, enforcement
+  // MUST take effect immediately -- not deferred to the next payload from the
+  // protected source stream. Deferring enforcement to the next source emission
+  // introduces an uncontrollable delay and creates a timing side-channel: an
+  // observer can correlate the cessation of data with the source's emission
+  // pattern, leaking information about a resource the user no longer has access
+  // to. For EnforceDropWhileDenied, there is no explicit signal to the
+  // subscriber (the stream stays alive but silent). The enforcement gate
+  // (permitted flag) MUST close synchronously in the decision handler so that
+  // any data emitted by the source after the DENY decision is immediately
+  // dropped, with zero data leaking through.
+  describe('immediate decision enforcement', () => {
+    test('whenDenyArrivesThenEnforcementGateClosedSynchronously', (done) => {
+      const sourceSubject = new Subject();
+      const bundle = createMockStreamingBundle();
+      const bestEffortBundle = createMockStreamingBundle();
+      (constraintService.streamingBundleFor as jest.Mock).mockReturnValue(bundle);
+      (constraintService.streamingBestEffortBundleFor as jest.Mock).mockReturnValue(bestEffortBundle);
+      const method = jest.fn().mockReturnValue(sourceSubject.asObservable());
+
+      const wrapped = wrapMethod(method);
+      const emissions: any[] = [];
+
+      wrapped().subscribe({
+        next: (v: any) => emissions.push(v),
+        error: done,
+      });
+
+      decisionSubject.next({ decision: 'PERMIT' });
+      sourceSubject.next({ data: 'before-deny' });
+
+      // DENY arrives -- gate must close synchronously
+      decisionSubject.next({ decision: 'DENY' });
+
+      // Source emits immediately after DENY in the same synchronous execution
+      // context. This data MUST be dropped, proving the gate closed before
+      // the source emission was processed.
+      sourceSubject.next({ data: 'immediately-after-deny' });
+      sourceSubject.next({ data: 'still-denied' });
+
+      expect(emissions).toEqual([{ data: 'before-deny' }]);
+      done();
+    });
+
+    test('whenRePermitArrivesThenEnforcementGateOpensSynchronously', (done) => {
+      const sourceSubject = new Subject();
+      const bundle = createMockStreamingBundle();
+      const bestEffortBundle = createMockStreamingBundle();
+      (constraintService.streamingBundleFor as jest.Mock).mockReturnValue(bundle);
+      (constraintService.streamingBestEffortBundleFor as jest.Mock).mockReturnValue(bestEffortBundle);
+      const method = jest.fn().mockReturnValue(sourceSubject.asObservable());
+
+      const wrapped = wrapMethod(method);
+      const emissions: any[] = [];
+
+      wrapped().subscribe({
+        next: (v: any) => emissions.push(v),
+        error: done,
+      });
+
+      decisionSubject.next({ decision: 'PERMIT' });
+      decisionSubject.next({ decision: 'DENY' });
+      sourceSubject.next({ data: 'during-deny' });
+
+      // Re-PERMIT arrives -- gate must open synchronously
+      decisionSubject.next({ decision: 'PERMIT' });
+
+      // Source emits immediately after re-PERMIT. This data MUST be forwarded,
+      // proving the gate opened before the source emission was processed.
+      sourceSubject.next({ data: 'immediately-after-repermit' });
+
+      expect(emissions).toEqual([{ data: 'immediately-after-repermit' }]);
+      done();
+    });
+  });
+
   describe('edge cases', () => {
     test('whenNeverPermittedThenNoDataEverEmitted', () => {
       const sourceSubject = new Subject();

@@ -50,6 +50,13 @@ export function createMockStreamingBundle(
   } as any;
 }
 
+export function createMockTransactionAdapter(active = false) {
+  return {
+    isActive: active,
+    withTransaction: jest.fn(async (fn: () => Promise<any>) => fn()),
+  };
+}
+
 export function createCtx(
   overrides: Partial<SubscriptionContext> = {},
 ): SubscriptionContext {
