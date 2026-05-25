@@ -1,5 +1,4 @@
 import { PdpService } from '../lib/pdp.service';
-import { SAPL_MODULE_OPTIONS } from '../lib/sapl.constants';
 
 function createService(overrides: Record<string, any> = {}): PdpService {
   return new PdpService({
@@ -57,17 +56,19 @@ describe('PdpService', () => {
   });
 
   describe('constructor', () => {
-    test('whenBaseUrlIsHttpWithoutFlagThenThrows', () => {
-      expect(() => createService({ baseUrl: 'http://localhost:8443' })).toThrow(
-        'Use HTTPS or set allowInsecureConnections: true',
+    test('whenBaseUrlIsHttpAndNonLoopbackThenThrows', () => {
+      expect(() => createService({ baseUrl: 'http://example.com:8443' })).toThrow(
+        'plain HTTP and targets a non-loopback host',
       );
     });
 
-    test('whenBaseUrlIsHttpWithAllowInsecureThenCreatesService', () => {
-      const service = createService({
-        baseUrl: 'http://localhost:8443',
-        allowInsecureConnections: true,
-      });
+    test('whenBaseUrlIsHttpAndLoopbackThenCreatesServiceWithWarning', () => {
+      const service = createService({ baseUrl: 'http://localhost:8443' });
+      expect(service).toBeInstanceOf(PdpService);
+    });
+
+    test('whenBaseUrlIsHttpAndLoopbackIpv4ThenCreatesService', () => {
+      const service = createService({ baseUrl: 'http://127.0.0.1:8443' });
       expect(service).toBeInstanceOf(PdpService);
     });
 
@@ -81,9 +82,9 @@ describe('PdpService', () => {
     });
 
     test('whenBothTokenAndBasicAuthConfiguredThenThrows', () => {
-      expect(() =>
-        createService({ token: 'my-token', username: 'user', secret: 'pass' }),
-      ).toThrow('authentication conflict');
+      expect(() => createService({ token: 'my-token', username: 'user', secret: 'pass' })).toThrow(
+        'authentication conflict',
+      );
     });
   });
 
@@ -124,11 +125,12 @@ describe('PdpService', () => {
     });
 
     test('whenTimeoutExceededThenResolvesWithIndeterminate', async () => {
-      globalThis.fetch = jest.fn().mockImplementation(() =>
-        new Promise((_, reject) => {
-          const err = new DOMException('The operation was aborted', 'AbortError');
-          setTimeout(() => reject(err), 100);
-        }),
+      globalThis.fetch = jest.fn().mockImplementation(
+        () =>
+          new Promise((_, reject) => {
+            const err = new DOMException('The operation was aborted', 'AbortError');
+            setTimeout(() => reject(err), 100);
+          }),
       );
 
       const service = createService({ timeout: 50 });
@@ -231,7 +233,7 @@ describe('PdpService', () => {
       });
 
       const service = createService();
-      const logSpy = jest.spyOn((service as any).logger, 'debug');
+      const logSpy = jest.spyOn((service as any).client.logger, 'debug');
 
       await service.decideOnce({
         subject: 'user',
@@ -252,14 +254,12 @@ describe('PdpService', () => {
       });
 
       const service = createService({ token: 'sensitive-bearer-token' });
-      const debugSpy = jest.spyOn((service as any).logger, 'debug');
-      const logSpy = jest.spyOn((service as any).logger, 'log');
+      const debugSpy = jest.spyOn((service as any).client.logger, 'debug');
+      const logSpy = jest.spyOn((service as any).client.logger, 'log');
 
       await service.decideOnce({ subject: 'user', action: 'read', resource: 'data' });
 
-      const allLogs = [...debugSpy.mock.calls, ...logSpy.mock.calls]
-        .map((c) => c[0])
-        .join(' ');
+      const allLogs = [...debugSpy.mock.calls, ...logSpy.mock.calls].map((c) => c[0]).join(' ');
       expect(allLogs).not.toContain('sensitive-bearer-token');
       debugSpy.mockRestore();
       logSpy.mockRestore();
@@ -275,7 +275,7 @@ describe('PdpService', () => {
       });
 
       const service = createService();
-      const errorSpy = jest.spyOn((service as any).logger, 'error');
+      const errorSpy = jest.spyOn((service as any).client.logger, 'error');
 
       await service.decideOnce({ subject: 'user', action: 'read', resource: 'data' });
 
@@ -321,9 +321,7 @@ describe('PdpService', () => {
     });
 
     test('whenPdpStreamEndsThenEmitsIndeterminateAndErrors', (done) => {
-      const stream = createReadableStream([
-        'data: {"decision":"PERMIT"}\n\n',
-      ]);
+      const stream = createReadableStream(['data: {"decision":"PERMIT"}\n\n']);
       globalThis.fetch = jest.fn().mockResolvedValue(mockFetchResponse(stream));
 
       const service = createService();
@@ -384,20 +382,14 @@ describe('PdpService', () => {
       service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
         next: (d) => emissions.push(d),
         error: () => {
-          expect(decisions(emissions)).toEqual([
-            { decision: 'PERMIT' },
-            { decision: 'DENY' },
-          ]);
+          expect(decisions(emissions)).toEqual([{ decision: 'PERMIT' }, { decision: 'DENY' }]);
           done();
         },
       });
     });
 
     test('whenSSEContainsCommentLinesThenIgnored', (done) => {
-      const stream = createReadableStream([
-        ': this is a comment\n',
-        'data: {"decision":"PERMIT"}\n\n',
-      ]);
+      const stream = createReadableStream([': this is a comment\n', 'data: {"decision":"PERMIT"}\n\n']);
       globalThis.fetch = jest.fn().mockResolvedValue(mockFetchResponse(stream));
 
       const service = createService();
@@ -413,10 +405,7 @@ describe('PdpService', () => {
     });
 
     test('whenSSEContainsEmptyDataThenSkipped', (done) => {
-      const stream = createReadableStream([
-        'data: \n\n',
-        'data: {"decision":"PERMIT"}\n\n',
-      ]);
+      const stream = createReadableStream(['data: \n\n', 'data: {"decision":"PERMIT"}\n\n']);
       globalThis.fetch = jest.fn().mockResolvedValue(mockFetchResponse(stream));
 
       const service = createService();
@@ -493,10 +482,7 @@ describe('PdpService', () => {
     });
 
     test('whenStreamContainsInvalidDecisionThenEmitsIndeterminate', (done) => {
-      const stream = createReadableStream([
-        '{"bad":"data"}\n',
-        '{"decision":"PERMIT"}\n',
-      ]);
+      const stream = createReadableStream(['{"bad":"data"}\n', '{"decision":"PERMIT"}\n']);
       globalThis.fetch = jest.fn().mockResolvedValue(mockFetchResponse(stream));
 
       const service = createService();
@@ -505,10 +491,7 @@ describe('PdpService', () => {
       service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
         next: (d) => emissions.push(d),
         error: () => {
-          expect(decisions(emissions)).toEqual([
-            { decision: 'INDETERMINATE' },
-            { decision: 'PERMIT' },
-          ]);
+          expect(decisions(emissions)).toEqual([{ decision: 'INDETERMINATE' }, { decision: 'PERMIT' }]);
           done();
         },
       });
@@ -581,9 +564,7 @@ describe('PdpService', () => {
       service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
         next: (d) => emissions.push(d),
         error: () => {
-          expect(decisions(emissions)).toEqual([
-            { decision: 'PERMIT', resource: '\u00fc\u00e4\u00f6' },
-          ]);
+          expect(decisions(emissions)).toEqual([{ decision: 'PERMIT', resource: '\u00fc\u00e4\u00f6' }]);
           done();
         },
       });
@@ -651,11 +632,10 @@ describe('PdpService', () => {
         streamingRetryMaxDelay: 5000,
       });
       const emissions: any[] = [];
-      let errorSeen = false;
 
       service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
         next: (d) => emissions.push(d),
-        error: () => { errorSeen = true; },
+        error: () => undefined,
       });
 
       // Flush: first fetch rejects -> INDETERMINATE emitted -> retry delay starts
@@ -675,9 +655,7 @@ describe('PdpService', () => {
 
       globalThis.fetch = jest.fn().mockImplementation(() => {
         fetchCallCount++;
-        const stream = createReadableStream([
-          `data: {"decision":"PERMIT","attempt":${fetchCallCount}}\n\n`,
-        ]);
+        const stream = createReadableStream([`data: {"decision":"PERMIT","attempt":${fetchCallCount}}\n\n`]);
         return Promise.resolve(mockFetchResponse(stream));
       });
 
@@ -691,7 +669,9 @@ describe('PdpService', () => {
 
       service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
         next: (d) => emissions.push(d),
-        error: (e) => { finalError = e; },
+        error: (e) => {
+          finalError = e;
+        },
       });
 
       // Attempt 1: stream opens, PERMIT emitted, stream ends -> INDETERMINATE -> retry
@@ -722,7 +702,9 @@ describe('PdpService', () => {
       let finalError: Error | null = null;
 
       service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
-        error: (err) => { finalError = err; },
+        error: (err) => {
+          finalError = err;
+        },
       });
 
       // Attempt 1 fails
@@ -763,42 +745,6 @@ describe('PdpService', () => {
       expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     });
 
-    test('whenRepeatedStreamFailuresThenLogEscalatesWarnToError', async () => {
-      globalThis.fetch = jest.fn().mockRejectedValue(new Error('Connection refused'));
-
-      const service = createService({
-        streamingMaxRetries: 6,
-        streamingRetryBaseDelay: 100,
-        streamingRetryMaxDelay: 500,
-      });
-      const warnSpy = jest.spyOn((service as any).logger, 'warn');
-      const errorSpy = jest.spyOn((service as any).logger, 'error');
-
-      service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
-        error: () => {},
-      });
-
-      // Advance through all 6 retry attempts
-      for (let i = 0; i < 6; i++) {
-        await jest.advanceTimersByTimeAsync(500);
-        await jest.advanceTimersByTimeAsync(0);
-      }
-      await jest.advanceTimersByTimeAsync(0);
-
-      const warnRetryMessages = warnSpy.mock.calls
-        .map((c) => String(c[0]))
-        .filter((m) => m.includes('reconnecting'));
-      const errorRetryMessages = errorSpy.mock.calls
-        .map((c) => String(c[0]))
-        .filter((m) => m.includes('reconnecting'));
-
-      expect(warnRetryMessages.length).toBeGreaterThan(0);
-      expect(errorRetryMessages.length).toBeGreaterThan(0);
-
-      warnSpy.mockRestore();
-      errorSpy.mockRestore();
-    });
-
     test('whenAuthErrorOnStreamThenLoggedAtErrorEveryTime', async () => {
       let fetchCallCount = 0;
       globalThis.fetch = jest.fn().mockImplementation(() => {
@@ -819,7 +765,7 @@ describe('PdpService', () => {
         streamingRetryBaseDelay: 100,
         streamingRetryMaxDelay: 500,
       });
-      const errorSpy = jest.spyOn((service as any).logger, 'error');
+      const errorSpy = jest.spyOn((service as any).client.logger, 'error');
 
       service.decide({ subject: 'user', action: 'read', resource: 'data' }).subscribe({
         error: () => {},

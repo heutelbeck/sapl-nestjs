@@ -1,42 +1,42 @@
 import { ClsService, CLS_REQ } from 'nestjs-cls';
 import { SubscriptionContext } from './SubscriptionContext';
-import { SubscriptionOptions, SubscriptionField } from './EnforceOptions';
+import { SubscriptionOptions, SubscriptionField } from './SubscriptionOptions';
 import { AuthorizationSubscription } from './types';
 
 /**
  * Resolve a SubscriptionField: if it's a function, call it with the context.
  * Otherwise return it as a literal value.
  */
-function resolve(field: SubscriptionField | undefined, ctx: SubscriptionContext): any {
-  return typeof field === 'function' ? field(ctx) : field;
+function resolve(field: SubscriptionField | undefined, context: SubscriptionContext): any {
+  return typeof field === 'function' ? field(context) : field;
 }
 
 /**
  * Build the default subject: the decoded JWT claims from request.user,
  * falling back to "anonymous" if no auth guard populated it.
  */
-function defaultSubject(ctx: SubscriptionContext): any {
-  return ctx.request.user ?? 'anonymous';
+function defaultSubject(context: SubscriptionContext): any {
+  return context.request.user ?? 'anonymous';
 }
 
 /**
  * Build the default action: HTTP method + controller/handler coordinates.
  */
-function defaultAction(ctx: SubscriptionContext): any {
+function defaultAction(context: SubscriptionContext): any {
   return {
-    method: ctx.request.method,
-    controller: ctx.controller,
-    handler: ctx.handler,
+    method: context.request.method,
+    controller: context.controller,
+    handler: context.handler,
   };
 }
 
 /**
  * Build the default resource: route path pattern + resolved parameters.
  */
-function defaultResource(ctx: SubscriptionContext): any {
+function defaultResource(context: SubscriptionContext): any {
   return {
-    path: ctx.request.route?.path ?? ctx.request.url,
-    params: ctx.params,
+    path: context.request.route?.path ?? context.request.url,
+    params: context.params,
   };
 }
 
@@ -44,13 +44,13 @@ function defaultResource(ctx: SubscriptionContext): any {
  * Build the default environment: server-side request metadata only.
  * Client-controlled headers (Date, X-Forwarded-For, X-Request-Id,
  * X-Correlation-Id) are deliberately excluded because they can be forged.
- * Use the environment callback in EnforceOptions to include them explicitly
+ * Use the environment callback in SubscriptionOptions to include them explicitly
  * if needed.
  */
-function defaultEnvironment(ctx: SubscriptionContext): any {
+function defaultEnvironment(context: SubscriptionContext): any {
   return {
-    ip: ctx.request.ip,
-    hostname: ctx.request.hostname,
+    ip: context.request.ip,
+    hostname: context.request.hostname,
   };
 }
 
@@ -84,13 +84,15 @@ export function buildContext(
  */
 export function buildSubscriptionFromContext(
   options: SubscriptionOptions,
-  ctx: SubscriptionContext,
+  context: SubscriptionContext,
 ): AuthorizationSubscription {
-  const subject     = options.subject     !== undefined ? resolve(options.subject, ctx)     : defaultSubject(ctx);
-  const action      = options.action      !== undefined ? resolve(options.action, ctx)      : defaultAction(ctx);
-  const resource    = options.resource    !== undefined ? resolve(options.resource, ctx)    : defaultResource(ctx);
-  const environment = options.environment !== undefined ? resolve(options.environment, ctx) : defaultEnvironment(ctx);
-  const secrets     = options.secrets     !== undefined ? resolve(options.secrets, ctx)     : undefined;
+  const subject = options.subject !== undefined ? resolve(options.subject, context) : defaultSubject(context);
+  const action = options.action !== undefined ? resolve(options.action, context) : defaultAction(context);
+  const resource =
+    options.resource !== undefined ? resolve(options.resource, context) : defaultResource(context);
+  const environment =
+    options.environment !== undefined ? resolve(options.environment, context) : defaultEnvironment(context);
+  const secrets = options.secrets !== undefined ? resolve(options.secrets, context) : undefined;
 
   const subscription: AuthorizationSubscription = { subject, action, resource, environment };
   if (secrets !== undefined) {

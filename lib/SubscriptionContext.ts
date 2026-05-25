@@ -20,18 +20,18 @@ export interface SaplRequest {
 /**
  * Context available to subscription field callbacks at request time.
  *
- * Passed to any EnforceOptions field that is a function, allowing dynamic
+ * Passed to any SubscriptionOptions field that is a function, allowing dynamic
  * subscription construction based on the current request.
  *
  * Example:
- *   @PreEnforce({ resource: (ctx) => ({ pilotId: ctx.params.pilotId }) })
+ *   @PreEnforce({ resource: (context) => ({ pilotId: context.params.pilotId }) })
  */
 export interface SubscriptionContext {
   /** The full HTTP request object (has .user, .headers, .cookies, etc.) */
   request: SaplRequest;
-  /** Route parameters -- @Get(':pilotId') -> ctx.params.pilotId */
+  /** Route parameters -- @Get(':pilotId') -> context.params.pilotId */
   params: Record<string, string>;
-  /** Query string parameters -- ?page=2 -> ctx.query.page */
+  /** Query string parameters -- ?page=2 -> context.query.page */
   query: Record<string, string | string[]>;
   /** Request body (POST/PUT) */
   body: any;

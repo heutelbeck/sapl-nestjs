@@ -1,12 +1,14 @@
 {
   "compilerOptions": {
     "module": "commonjs",
-    "target": "ES2021",
+    "target": "ES2022",
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
     "strict": true,
-"emitDecoratorMetadata": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "esModuleInterop": true,
     "outDir": "./dist",

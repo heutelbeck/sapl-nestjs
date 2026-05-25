@@ -1,5 +1,5 @@
 import { createDecorator } from '@toss/nestjs-aop';
-import { EnforceOptions } from './EnforceOptions';
+import { SubscriptionOptions } from './SubscriptionOptions';
 
 export const POST_ENFORCE_SYMBOL = Symbol('sapl:post-enforce');
 
@@ -22,5 +22,5 @@ export const POST_ENFORCE_SYMBOL = Symbol('sapl:post-enforce');
  *   @Get('patient/:id')
  *   async getPatient(@Param('id') id: string) { ... }
  */
-export const PostEnforce = (options: EnforceOptions = {}) =>
+export const PostEnforce = (options: SubscriptionOptions = {}) =>
   createDecorator(POST_ENFORCE_SYMBOL, options);

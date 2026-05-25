@@ -16,16 +16,16 @@ describe('ContentFilter', () => {
         const handler = getHandler({
           actions: [{ type: 'delete', path: '$.address.zip' }],
         });
-        expect(handler({ address: { city: 'NYC', zip: '10001' } }))
-          .toEqual({ address: { city: 'NYC' } });
+        expect(handler({ address: { city: 'NYC', zip: '10001' } })).toEqual({ address: { city: 'NYC' } });
       });
 
       test('whenDeleteDeeplyNestedPathThenRemovesField', () => {
         const handler = getHandler({
           actions: [{ type: 'delete', path: '$.a.b.c.d' }],
         });
-        expect(handler({ a: { b: { c: { d: 'secret', e: 'keep' } } } }))
-          .toEqual({ a: { b: { c: { e: 'keep' } } } });
+        expect(handler({ a: { b: { c: { d: 'secret', e: 'keep' } } } })).toEqual({
+          a: { b: { c: { e: 'keep' } } },
+        });
       });
     });
 
@@ -34,8 +34,7 @@ describe('ContentFilter', () => {
         const handler = getHandler({
           actions: [{ type: 'replace', path: '$.ssn', replacement: 'REDACTED' }],
         });
-        expect(handler({ name: 'Jane', ssn: '123-45-6789' }))
-          .toEqual({ name: 'Jane', ssn: 'REDACTED' });
+        expect(handler({ name: 'Jane', ssn: '123-45-6789' })).toEqual({ name: 'Jane', ssn: 'REDACTED' });
       });
 
       test('whenReplaceWithNullThenSetsNull', () => {
@@ -56,16 +55,17 @@ describe('ContentFilter', () => {
 
       test('whenBlackenWithDiscloseLeftAndRightThenPreservesEnds', () => {
         const handler = getHandler({
-          actions: [{
-            type: 'blacken',
-            path: '$.email',
-            replacement: 'X',
-            discloseLeft: 2,
-            discloseRight: 4,
-          }],
+          actions: [
+            {
+              type: 'blacken',
+              path: '$.email',
+              replacement: 'X',
+              discloseLeft: 2,
+              discloseRight: 4,
+            },
+          ],
         });
-        expect(handler({ email: 'jane.doe@example.com' }).email)
-          .toBe('ja' + 'X'.repeat(14) + '.com');
+        expect(handler({ email: 'jane.doe@example.com' }).email).toBe('ja' + 'X'.repeat(14) + '.com');
       });
 
       test('whenBlackenWithCustomReplacementThenUsesIt', () => {
@@ -98,14 +98,16 @@ describe('ContentFilter', () => {
 
       test('whenBlackenWithLengthAndDiscloseThenCombines', () => {
         const handler = getHandler({
-          actions: [{
-            type: 'blacken',
-            path: '$.ssn',
-            replacement: '*',
-            length: 5,
-            discloseLeft: 2,
-            discloseRight: 2,
-          }],
+          actions: [
+            {
+              type: 'blacken',
+              path: '$.ssn',
+              replacement: '*',
+              length: 5,
+              discloseLeft: 2,
+              discloseRight: 2,
+            },
+          ],
         });
         expect(handler({ ssn: '123-45-6789' }).ssn).toBe('12*****89');
       });
@@ -119,13 +121,15 @@ describe('ContentFilter', () => {
 
       test('whenDiscloseExceedsLengthThenReturnOriginal', () => {
         const handler = getHandler({
-          actions: [{
-            type: 'blacken',
-            path: '$.short',
-            replacement: '*',
-            discloseLeft: 5,
-            discloseRight: 5,
-          }],
+          actions: [
+            {
+              type: 'blacken',
+              path: '$.short',
+              replacement: '*',
+              discloseLeft: 5,
+              discloseRight: 5,
+            },
+          ],
         });
         expect(handler({ short: 'ab' }).short).toBe('ab');
       });
@@ -151,8 +155,7 @@ describe('ContentFilter', () => {
           conditions: [{ path: '$.role', type: '==', value: 'patient' }],
           actions: [{ type: 'delete', path: '$.ssn' }],
         });
-        expect(handler({ role: 'patient', ssn: '123-45-6789' }))
-          .not.toHaveProperty('ssn');
+        expect(handler({ role: 'patient', ssn: '123-45-6789' })).not.toHaveProperty('ssn');
       });
 
       test('whenConditionNotMetThenNoActions', () => {
@@ -160,8 +163,7 @@ describe('ContentFilter', () => {
           conditions: [{ path: '$.role', type: '==', value: 'patient' }],
           actions: [{ type: 'delete', path: '$.ssn' }],
         });
-        expect(handler({ role: 'doctor', ssn: '123-45-6789' }).ssn)
-          .toBe('123-45-6789');
+        expect(handler({ role: 'doctor', ssn: '123-45-6789' }).ssn).toBe('123-45-6789');
       });
 
       test('whenMultipleConditionsThenAllMustMatch', () => {
@@ -183,10 +185,12 @@ describe('ContentFilter', () => {
         const handler = getHandler({
           actions: [{ type: 'delete', path: '$.ssn' }],
         });
-        expect(handler([
-          { name: 'A', ssn: '111' },
-          { name: 'B', ssn: '222' },
-        ])).toEqual([{ name: 'A' }, { name: 'B' }]);
+        expect(
+          handler([
+            { name: 'A', ssn: '111' },
+            { name: 'B', ssn: '222' },
+          ]),
+        ).toEqual([{ name: 'A' }, { name: 'B' }]);
       });
 
       test('whenArrayWithConditionsThenOnlyMatchingElementsTransformed', () => {
@@ -194,10 +198,12 @@ describe('ContentFilter', () => {
           conditions: [{ path: '$.active', type: '==', value: true }],
           actions: [{ type: 'delete', path: '$.internal' }],
         });
-        expect(handler([
-          { active: true, internal: 'x', name: 'A' },
-          { active: false, internal: 'y', name: 'B' },
-        ])).toEqual([
+        expect(
+          handler([
+            { active: true, internal: 'x', name: 'A' },
+            { active: false, internal: 'y', name: 'B' },
+          ]),
+        ).toEqual([
           { active: true, name: 'A' },
           { active: false, internal: 'y', name: 'B' },
         ]);
@@ -207,8 +213,11 @@ describe('ContentFilter', () => {
         const handler = getHandler({
           actions: [{ type: 'delete', path: '$.ssn' }],
         });
-        expect(handler([{ name: 'A', ssn: '111' }, null, { name: 'B', ssn: '222' }]))
-          .toEqual([{ name: 'A' }, null, { name: 'B' }]);
+        expect(handler([{ name: 'A', ssn: '111' }, null, { name: 'B', ssn: '222' }])).toEqual([
+          { name: 'A' },
+          null,
+          { name: 'B' },
+        ]);
       });
     });
 
@@ -255,8 +264,7 @@ describe('ContentFilter', () => {
         const handler = getHandler({
           actions: [{ type: 'encrypt', path: '$.ssn' }],
         });
-        expect(() => handler({ name: 'Jane', ssn: '123' }))
-          .toThrow("Unknown action type: 'encrypt'");
+        expect(() => handler({ name: 'Jane', ssn: '123' })).toThrow("Unknown action type: 'encrypt'");
       });
 
       test('whenReplaceWithoutReplacementThenThrowsError', () => {
@@ -284,8 +292,7 @@ describe('ContentFilter', () => {
         const handler = getHandler({
           actions: [{ type: 'delete', path: 'ssn' }],
         });
-        expect(handler({ name: 'Jane', ssn: '123' }))
-          .toEqual({ name: 'Jane' });
+        expect(handler({ name: 'Jane', ssn: '123' })).toEqual({ name: 'Jane' });
       });
 
       test('whenRecursiveDescentPathThenThrowsError', () => {
@@ -313,7 +320,9 @@ describe('ContentFilter', () => {
         const handler = getHandler({
           actions: [{ type: 'blacken', path: '$.users[*].email' }],
         });
-        expect(() => handler({ users: [{ email: 'a@b.com' }] })).toThrow('Unsupported JSONPath: bracket notation');
+        expect(() => handler({ users: [{ email: 'a@b.com' }] })).toThrow(
+          'Unsupported JSONPath: bracket notation',
+        );
       });
 
       test('whenFilterExpressionPathThenThrowsError', () => {
@@ -323,16 +332,15 @@ describe('ContentFilter', () => {
         expect(() => handler({ books: [] })).toThrow('Unsupported JSONPath: bracket notation');
       });
 
-      test.each([
-        '$.__proto__.polluted',
-        '$.constructor.polluted',
-        '$.prototype.polluted',
-      ])('whenPrototypePollutingPath %s thenThrowsUnsafePathError', (path) => {
-        const handler = getHandler({
-          actions: [{ type: 'delete', path }],
-        });
-        expect(() => handler({ safe: 'value' })).toThrow('Unsafe path segment');
-      });
+      test.each(['$.__proto__.polluted', '$.constructor.polluted', '$.prototype.polluted'])(
+        'whenPrototypePollutingPath %s thenThrowsUnsafePathError',
+        (path) => {
+          const handler = getHandler({
+            actions: [{ type: 'delete', path }],
+          });
+          expect(() => handler({ safe: 'value' })).toThrow('Unsafe path segment');
+        },
+      );
     });
   });
 
@@ -352,13 +360,15 @@ describe('ContentFilter', () => {
       { operator: '>', actual: 5, expected: 5, result: false },
       { operator: '<', actual: 3, expected: 5, result: true },
       { operator: '<', actual: 5, expected: 5, result: false },
-    ])('when$operator with actual=$actual expected=$expected thenReturns$result',
+    ])(
+      'when$operator with actual=$actual expected=$expected thenReturns$result',
       ({ operator, actual, expected, result }) => {
         const predicate = predicateFromConditions({
           conditions: [{ path: '$.value', type: operator, value: expected }],
         });
         expect(predicate({ value: actual })).toBe(result);
-      });
+      },
+    );
 
     test('whenRegexMatchThenReturnsTrue', () => {
       const predicate = predicateFromConditions({

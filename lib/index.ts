@@ -17,54 +17,32 @@ export {
 // PDP
 export { PdpService } from './pdp.service';
 
+// Transports
+export type { PdpClient } from './transport/PdpClient';
+export { HttpPdpClient, type HttpPdpClientOptions } from './transport/HttpPdpClient';
+export { RsocketPdpClient, type RsocketPdpClientOptions } from './transport/RsocketPdpClient';
+export type { TlsConfig } from './transport/TlsConfig';
+export { OAuth2TokenProvider, type OAuth2TokenProviderOptions } from './transport/auth/OAuth2TokenProvider';
+
 // Decorators
 export { PreEnforce } from './PreEnforce';
 export { PostEnforce } from './PostEnforce';
-export { EnforceTillDenied } from './EnforceTillDenied';
-export { EnforceDropWhileDenied } from './EnforceDropWhileDenied';
-export { EnforceRecoverableIfDenied } from './EnforceRecoverableIfDenied';
+export { StreamEnforce, StreamEnforceOptions } from './streaming/StreamEnforce';
+
+// Boundary signals
+export { AccessDeniedError, AccessSuspendedSignal, AccessGrantedSignal } from './streaming/BoundarySignals';
+export { TransitionSignals } from './streaming/TransitionSignals';
 
 // Options and context
-export {
-  SubscriptionOptions,
-  EnforceOptions,
-  SubscriptionField,
-  OnDenyHandler,
-} from './EnforceOptions';
-export {
-  RestrictedStreamEventEmitter,
-  StreamEventEmitter,
-  EnforceTillDeniedOptions,
-  EnforceDropWhileDeniedOptions,
-  EnforceRecoverableOptions,
-  OnStreamDenyHandler,
-  OnStreamRecoverHandler,
-} from './StreamingEnforceOptions';
-export { StreamingEnforcementConfig, createStreamingEnforcement } from './StreamingEnforcementCore';
+export { SubscriptionOptions, SubscriptionField } from './SubscriptionOptions';
 export { SaplRequest, SubscriptionContext } from './SubscriptionContext';
-export { MethodInvocationContext } from './MethodInvocationContext';
 
 // Constraint handler API
-export {
-  NO_RESOURCE_REPLACEMENT,
-  Signal,
-  Responsible,
-  RunnableConstraintHandlerProvider,
-  ConsumerConstraintHandlerProvider,
-  MappingConstraintHandlerProvider,
-  ErrorHandlerProvider,
-  ErrorMappingConstraintHandlerProvider,
-  FilterPredicateConstraintHandlerProvider,
-  MethodInvocationConstraintHandlerProvider,
-} from './constraints/api/index';
+export type { ConstraintHandlerProvider, ScopedHandler, HandlerShape } from './constraints/api/index';
+export type { Signal, SignalKind } from './constraints/Signal';
 
 // Constraint handler registration
-export {
-  SaplConstraintHandler,
-  ConstraintHandlerType,
-} from './constraints/SaplConstraintHandler';
+export { SaplConstraintHandler, ConstraintHandlerType } from './constraints/SaplConstraintHandler';
 
-// Constraint handler service
-export { ConstraintEnforcementService } from './constraints/ConstraintEnforcementService';
-export { ConstraintHandlerBundle } from './constraints/ConstraintHandlerBundle';
-export { StreamingConstraintHandlerBundle } from './constraints/StreamingConstraintHandlerBundle';
+// Constraint enforcement planner
+export { EnforcementPlanner } from './constraints/Planner';

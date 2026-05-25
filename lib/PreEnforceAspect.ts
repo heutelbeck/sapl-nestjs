@@ -2,134 +2,100 @@ import { Logger } from '@nestjs/common';
 import { Aspect, LazyDecorator, WrapParams } from '@toss/nestjs-aop';
 import { ClsService } from 'nestjs-cls';
 import { PRE_ENFORCE_SYMBOL } from './PreEnforce';
-import { EnforceOptions } from './EnforceOptions';
-import { MethodInvocationContext } from './MethodInvocationContext';
+import { SubscriptionOptions } from './SubscriptionOptions';
+import { EnforcementPlanner } from './constraints/Planner';
+import { EnforcementPlan } from './constraints/Plan';
+import type { SignalKind } from './constraints/Signal';
 import { PdpService } from './pdp.service';
 import { buildContext, buildSubscriptionFromContext } from './SubscriptionBuilder';
-import { SubscriptionContext } from './SubscriptionContext';
-import { ConstraintEnforcementService } from './constraints/ConstraintEnforcementService';
-import { handleDeny, applyDeny } from './enforcement-utils';
+import { handleDeny } from './enforcement-utils';
 import { SaplTransactionAdapter } from './SaplTransactionAdapter';
+import { AccessDeniedError } from './streaming/BoundarySignals';
+import type { AuthorizationDecision } from './types';
+
+const PRE_SIGNALS: ReadonlySet<SignalKind> = new Set<SignalKind>(['decision', 'input', 'output', 'error']);
 
 @Aspect(PRE_ENFORCE_SYMBOL)
-export class PreEnforceAspect implements LazyDecorator<any, EnforceOptions> {
+export class PreEnforceAspect implements LazyDecorator<any, SubscriptionOptions> {
   private readonly logger = new Logger(PreEnforceAspect.name);
 
   constructor(
     private readonly pdpService: PdpService,
     private readonly cls: ClsService,
-    private readonly constraintService: ConstraintEnforcementService,
+    private readonly planner: EnforcementPlanner,
     private readonly transactionAdapter: SaplTransactionAdapter,
   ) {}
 
-  wrap({ method, metadata, methodName, instance }: WrapParams<any, EnforceOptions>) {
-    const aspect = this;
+  wrap({ method, metadata, methodName, instance }: WrapParams<any, SubscriptionOptions>) {
     const className = instance.constructor.name;
 
     return async (...args: any[]) => {
-      const ctx = buildContext(aspect.cls, methodName, className, args);
-      const subscription = buildSubscriptionFromContext(metadata, ctx);
-      const { secrets, ...safeForLog } = subscription;
-      aspect.logger.debug(`Subscription: ${JSON.stringify(safeForLog)}`);
+      const context = buildContext(this.cls, methodName, className, args);
+      const subscription = buildSubscriptionFromContext(metadata, context);
+      const { secrets: _secrets, ...safeForLog } = subscription;
+      this.logger.debug(`Subscription: ${JSON.stringify(safeForLog)}`);
 
-      const decision = await aspect.pdpService.decideOnce(subscription);
-      aspect.logger.debug(`Decision: ${JSON.stringify(decision)}`);
+      const decision = await this.pdpService.decideOnce(subscription);
+      this.logger.debug(`Decision: ${JSON.stringify(decision)}`);
 
       if (decision.decision === 'PERMIT') {
-        return aspect.handlePermit(decision, metadata, ctx, method, args, methodName, className);
+        return this.handlePermit(decision, method, args);
       }
 
-      return handleDeny(aspect.logger, aspect.constraintService, decision, metadata, ctx);
+      handleDeny(this.logger, this.planner, decision);
     };
   }
 
-  private handlePermit(
-    decision: any,
-    options: EnforceOptions,
-    ctx: SubscriptionContext,
+  private async handlePermit(
+    decision: AuthorizationDecision,
     method: (...args: any[]) => any,
     args: any[],
-    methodName: string,
-    className: string,
-  ): any {
-    let bundle;
-    try {
-      bundle = this.constraintService.preEnforceBundleFor(decision);
-    } catch (error) {
-      this.logger.warn(`Obligation handling failed on PERMIT: ${error}`);
-      return applyDeny(options, ctx, decision);
+  ): Promise<any> {
+    const plan = this.planner.plan(decision, PRE_SIGNALS);
+
+    const decisionResult = plan.execute({ kind: 'decision', value: decision });
+    if (decisionResult.failureState) {
+      this.logger.warn('Decision-scoped constraint enforcement failed on PERMIT');
+      throw new AccessDeniedError('Decision-scoped obligation enforcement failed');
     }
 
-    // Phase 1: pre-method obligation handlers -- failure denies access
-    const invocationContext: MethodInvocationContext = {
-      request: ctx.request,
-      args,
-      methodName,
-      className,
+    const inputResult = plan.execute({ kind: 'input', value: args });
+    if (inputResult.failureState) {
+      this.logger.warn('Input constraint enforcement failed on PERMIT');
+      throw new AccessDeniedError('Input obligation enforcement failed');
+    }
+    const effectiveArgs =
+      inputResult.value.kind === 'present' && Array.isArray(inputResult.value.value)
+        ? (inputResult.value.value as unknown[])
+        : args;
+
+    const invokeAndEnforce = async () => {
+      let result;
+      try {
+        result = await method(...effectiveArgs);
+      } catch (methodError) {
+        const asError = methodError instanceof Error ? methodError : new Error(String(methodError));
+        const errorResult = plan.execute({ kind: 'error', value: asError });
+        if (errorResult.value.kind === 'present' && errorResult.value.value instanceof Error) {
+          throw errorResult.value.value;
+        }
+        throw asError;
+      }
+      return this.applyOutput(plan, result);
     };
-    try {
-      bundle.handleOnDecisionConstraints();
-      bundle.handleMethodInvocationHandlers(invocationContext);
-    } catch (error) {
-      this.logger.warn(`Obligation handling failed on PERMIT: ${error}`);
-      return applyDeny(options, ctx, decision);
-    }
 
-    // When transactional, wrap Phase 2 + Phase 3 so any failure triggers rollback
     if (this.transactionAdapter.isActive) {
-      return this.transactionAdapter.withTransaction(async () => {
-        let result;
-        try {
-          result = await method(...invocationContext.args);
-        } catch (methodError) {
-          throw bundle.handleAllOnErrorConstraints(
-            methodError instanceof Error ? methodError : new Error(String(methodError)),
-          );
-        }
-        try {
-          return bundle.handleAllOnNextConstraints(result);
-        } catch (obligationError) {
-          this.logger.warn(`Obligation handling failed on PERMIT: ${obligationError}`);
-          return applyDeny(options, ctx, decision);
-        }
-      });
+      return this.transactionAdapter.withTransaction(invokeAndEnforce);
     }
-
-    // Phase 2: method execution -- errors propagate after error handler mapping
-    let result;
-    try {
-      result = method(...invocationContext.args);
-    } catch (methodError) {
-      throw bundle.handleAllOnErrorConstraints(
-        methodError instanceof Error ? methodError : new Error(String(methodError)),
-      );
-    }
-
-    // Phase 3: post-method obligation handlers -- failure denies access
-    if (result instanceof Promise) {
-      return result.then(
-        (value) => {
-          try {
-            return bundle.handleAllOnNextConstraints(value);
-          } catch (obligationError) {
-            this.logger.warn(`Obligation handling failed on PERMIT: ${obligationError}`);
-            return applyDeny(options, ctx, decision);
-          }
-        },
-        (methodError) => {
-          throw bundle.handleAllOnErrorConstraints(
-            methodError instanceof Error ? methodError : new Error(String(methodError)),
-          );
-        },
-      );
-    }
-
-    try {
-      return bundle.handleAllOnNextConstraints(result);
-    } catch (obligationError) {
-      this.logger.warn(`Obligation handling failed on PERMIT: ${obligationError}`);
-      return applyDeny(options, ctx, decision);
-    }
+    return invokeAndEnforce();
   }
 
+  private applyOutput(plan: EnforcementPlan, result: unknown): unknown {
+    const outputResult = plan.execute({ kind: 'output', value: result });
+    if (outputResult.failureState) {
+      this.logger.warn('Output constraint enforcement failed on PERMIT');
+      throw new AccessDeniedError('Output obligation enforcement failed');
+    }
+    return outputResult.value.kind === 'present' ? outputResult.value.value : null;
+  }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@sapl/nestjs",
-  "version": "1.0.3",
+  "version": "2.0.0",
   "description": "SAPL authorization for NestJS - ABAC with constraint handling",
   "author": "Dominic Heutelbeck",
   "keywords": [
@@ -26,14 +26,22 @@
   },
   "files": [
     "dist",
+    "dist/transport/codec/*.proto",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && npm run build:copy-protos",
+    "build:copy-protos": "node -e \"const fs=require('fs');const src='lib/transport/codec';const dst='dist/transport/codec';fs.mkdirSync(dst,{recursive:true});for(const f of fs.readdirSync(src).filter(f=>f.endsWith('.proto'))){fs.copyFileSync(src+'/'+f,dst+'/'+f);}\"",
     "test": "jest",
     "test:cov": "jest --coverage",
-    "prepublishOnly": "npm run build"
+    "test:it": "jest --config jest.it.config.ts",
+    "lint": "eslint lib test",
+    "format": "prettier --write \"lib/**/*.ts\" \"test/**/*.ts\"",
+    "format:check": "prettier --check \"lib/**/*.ts\" \"test/**/*.ts\"",
+    "knip": "knip",
+    "prepublishOnly": "npm run build",
+    "pack:install-demo": "npm run build && npm pack && npm --prefix ../sapl-nestjs-demo install $(pwd)/sapl-nestjs-$npm_package_version.tgz"
   },
   "peerDependencies": {
     "@nestjs-cls/transactional": ">=2.0.0",
@@ -50,19 +58,27 @@
     }
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@nestjs/common": "^11.0.0",
     "@nestjs/core": "^11.0.0",
     "@nestjs/testing": "^11.0.0",
     "@toss/nestjs-aop": "^2.1.7",
     "@types/jest": "^30.0.0",
     "@types/node": "^22.0.0",
+    "eslint": "^10.4.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.5",
     "jest": "^30.0.0",
+    "knip": "^6.14.2",
     "nestjs-cls": "^6.2.0",
+    "prettier": "^3.8.3",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.0",
+    "testcontainers": "^12.0.0",
     "ts-jest": "^29.2.5",
     "ts-node": "^10.9.2",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.59.4"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -79,6 +95,12 @@
     "glob": "^13.0.0"
   },
   "dependencies": {
-    "safe-regex2": "^5.0.0"
+    "@rsocket/composite-metadata": "1.0.0-alpha.3",
+    "@rsocket/core": "1.0.0-alpha.3",
+    "@rsocket/tcp-client": "1.0.0-alpha.3",
+    "openid-client": "^6.8.4",
+    "protobufjs": "^8.4.2",
+    "safe-regex2": "^5.0.0",
+    "undici": "^8.3.0"
   }
 }

@@ -3,27 +3,53 @@ import { ContentFilterPredicateProvider } from '../../../lib/constraints/provide
 describe('ContentFilterPredicateProvider', () => {
   const provider = new ContentFilterPredicateProvider();
 
-  describe('isResponsible', () => {
-    test('whenTypeIsJsonContentFilterPredicateThenReturnsTrue', () => {
-      expect(provider.isResponsible({ type: 'jsonContentFilterPredicate' })).toBe(true);
-    });
-
-    test.each([
-      { type: 'filterJsonContent' },
-      { type: 'other' },
-      {},
-      null,
-      undefined,
-    ])('whenTypeIs%pThenReturnsFalse', (constraint) => {
-      expect(provider.isResponsible(constraint)).toBe(false);
-    });
+  test('whenConstraintIsNotJsonContentFilterPredicateThenReturnsEmptyHandlers', () => {
+    expect(provider.getHandlers({ type: 'filterJsonContent' })).toEqual([]);
+    expect(provider.getHandlers({ type: 'other' })).toEqual([]);
+    expect(provider.getHandlers({})).toEqual([]);
+    expect(provider.getHandlers(null)).toEqual([]);
+    expect(provider.getHandlers(undefined)).toEqual([]);
   });
 
-  test('whenGetHandlerThenDelegatesToContentFilterPredicateFromConditions', () => {
-    const handler = provider.getHandler({
+  test('whenConstraintMatchesThenReturnsOutputMapperAtPriorityZero', () => {
+    const handlers = provider.getHandlers({
+      type: 'jsonContentFilterPredicate',
       conditions: [{ path: '$.status', type: '==', value: 'active' }],
     });
-    expect(handler({ status: 'active' })).toBe(true);
-    expect(handler({ status: 'inactive' })).toBe(false);
+
+    expect(handlers).toHaveLength(1);
+    const [h] = handlers;
+    expect(h.signal).toBe('output');
+    expect(h.shape).toBe('mapper');
+    expect(h.priority).toBe(0);
+  });
+
+  test('whenHandlerInvokedOnArrayThenFiltersElementsByPredicate', () => {
+    const [h] = provider.getHandlers({
+      type: 'jsonContentFilterPredicate',
+      conditions: [{ path: '$.status', type: '==', value: 'active' }],
+    });
+
+    const result = h.handler([{ status: 'active' }, { status: 'inactive' }, { status: 'active' }]);
+    expect(result).toEqual([{ status: 'active' }, { status: 'active' }]);
+  });
+
+  test('whenHandlerInvokedOnNonMatchingSingletonThenReturnsNull', () => {
+    const [h] = provider.getHandlers({
+      type: 'jsonContentFilterPredicate',
+      conditions: [{ path: '$.status', type: '==', value: 'active' }],
+    });
+
+    expect(h.handler({ status: 'inactive' })).toBeNull();
+  });
+
+  test('whenHandlerInvokedOnMatchingSingletonThenReturnsValueUnchanged', () => {
+    const [h] = provider.getHandlers({
+      type: 'jsonContentFilterPredicate',
+      conditions: [{ path: '$.status', type: '==', value: 'active' }],
+    });
+
+    const value = { status: 'active' };
+    expect(h.handler(value)).toBe(value);
   });
 });

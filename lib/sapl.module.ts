@@ -7,25 +7,23 @@ import { SaplModuleOptions, SaplModuleAsyncOptions } from './sapl.interfaces';
 import { PdpService } from './pdp.service';
 import { PreEnforceAspect } from './PreEnforceAspect';
 import { PostEnforceAspect } from './PostEnforceAspect';
-import { EnforceTillDeniedAspect } from './EnforceTillDeniedAspect';
-import { EnforceDropWhileDeniedAspect } from './EnforceDropWhileDeniedAspect';
-import { EnforceRecoverableIfDeniedAspect } from './EnforceRecoverableIfDeniedAspect';
-import { ConstraintEnforcementService } from './constraints/ConstraintEnforcementService';
+import { StreamEnforceAspect } from './streaming/StreamEnforceAspect';
 import { ContentFilteringProvider } from './constraints/providers/ContentFilteringProvider';
 import { ContentFilterPredicateProvider } from './constraints/providers/ContentFilterPredicateProvider';
+import { ProviderRegistry } from './constraints/ProviderRegistry';
+import { EnforcementPlanner } from './constraints/Planner';
 import { SaplTransactionAdapter } from './SaplTransactionAdapter';
 
 const SHARED_PROVIDERS = [
   PdpService,
-  ConstraintEnforcementService,
+  ProviderRegistry,
+  EnforcementPlanner,
   ContentFilteringProvider,
   ContentFilterPredicateProvider,
   SaplTransactionAdapter,
   PreEnforceAspect,
   PostEnforceAspect,
-  EnforceTillDeniedAspect,
-  EnforceDropWhileDeniedAspect,
-  EnforceRecoverableIfDeniedAspect,
+  StreamEnforceAspect,
 ];
 
 @Module({})
@@ -42,11 +40,8 @@ export class SaplModule {
           ...options.cls,
         }),
       ],
-      providers: [
-        { provide: SAPL_MODULE_OPTIONS, useValue: options },
-        ...SHARED_PROVIDERS,
-      ],
-      exports: [PdpService, ConstraintEnforcementService],
+      providers: [{ provide: SAPL_MODULE_OPTIONS, useValue: options }, ...SHARED_PROVIDERS],
+      exports: [PdpService, EnforcementPlanner],
       global: true,
     };
   }
@@ -76,7 +71,7 @@ export class SaplModule {
         },
         ...SHARED_PROVIDERS,
       ],
-      exports: [PdpService, ConstraintEnforcementService],
+      exports: [PdpService, EnforcementPlanner],
       global: true,
     };
   }

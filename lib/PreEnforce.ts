@@ -1,5 +1,5 @@
 import { createDecorator } from '@toss/nestjs-aop';
-import { EnforceOptions } from './EnforceOptions';
+import { SubscriptionOptions } from './SubscriptionOptions';
 
 export const PRE_ENFORCE_SYMBOL = Symbol('sapl:pre-enforce');
 
@@ -20,5 +20,4 @@ export const PRE_ENFORCE_SYMBOL = Symbol('sapl:pre-enforce');
  *   @Get('exportData/:id')
  *   async getExportData(@Param('id') id: string) { ... }
  */
-export const PreEnforce = (options: EnforceOptions = {}) =>
-  createDecorator(PRE_ENFORCE_SYMBOL, options);
+export const PreEnforce = (options: SubscriptionOptions = {}) => createDecorator(PRE_ENFORCE_SYMBOL, options);

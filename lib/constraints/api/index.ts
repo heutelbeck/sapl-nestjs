@@ -1,44 +1,31 @@
-export const NO_RESOURCE_REPLACEMENT = Symbol('NO_RESOURCE_REPLACEMENT');
+import type { SignalKind } from '../Signal';
 
-export enum Signal {
-  ON_DECISION = 'ON_DECISION',
-  ON_COMPLETE = 'ON_COMPLETE',
-  ON_CANCEL = 'ON_CANCEL',
+export type HandlerShape = 'runner' | 'consumer' | 'mapper';
+
+/**
+ * A constraint handler scoped to a signal at a priority. Runners are
+ * admissible at any signal; mappers and consumers only at data-carrying
+ * signals (input, output, error). The handler's shape determines what
+ * it does with the value passed to it:
+ *
+ * - Runner:   `() => void`        side effect only
+ * - Consumer: `(value) => void`   observes the value, does not transform
+ * - Mapper:   `(value) => value`  transforms the value (obligation-only)
+ */
+export interface ScopedHandler {
+  readonly signal: SignalKind;
+  readonly priority: number;
+  readonly shape: HandlerShape;
+  readonly handler: (value: unknown) => unknown | void;
 }
 
-export interface Responsible {
-  isResponsible(constraint: any): boolean;
-}
-
-export interface RunnableConstraintHandlerProvider extends Responsible {
-  getSignal(): Signal;
-  getHandler(constraint: any): () => void;
-}
-
-export interface ConsumerConstraintHandlerProvider extends Responsible {
-  getHandler(constraint: any): (value: any) => void;
-}
-
-export interface MappingConstraintHandlerProvider extends Responsible {
-  getPriority(): number;
-  getHandler(constraint: any): (value: any) => any;
-}
-
-export interface ErrorHandlerProvider extends Responsible {
-  getHandler(constraint: any): (error: Error) => void;
-}
-
-export interface ErrorMappingConstraintHandlerProvider extends Responsible {
-  getPriority(): number;
-  getHandler(constraint: any): (error: Error) => Error;
-}
-
-export interface FilterPredicateConstraintHandlerProvider extends Responsible {
-  getHandler(constraint: any): (element: any) => boolean;
-}
-
-import { MethodInvocationContext } from '../../MethodInvocationContext';
-
-export interface MethodInvocationConstraintHandlerProvider extends Responsible {
-  getHandler(constraint: any): (context: MethodInvocationContext) => void;
+/**
+ * Per paper Algorithm 1 (lines 468-480): a handler provider claims
+ * responsibility for some subset of constraints. For a recognised
+ * constraint, returns the set of scoped handlers that together enforce
+ * it (possibly targeting multiple signals). For an unrecognised
+ * constraint, returns the empty array.
+ */
+export interface ConstraintHandlerProvider {
+  getHandlers(constraint: unknown): ReadonlyArray<ScopedHandler>;
 }

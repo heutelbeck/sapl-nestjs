@@ -1,0 +1,75 @@
+import { GenericContainer, StartedNetwork, StartedTestContainer, Wait } from 'testcontainers';
+
+const OAUTH_PORT = 8080;
+const STARTUP_TIMEOUT_MS = 60_000;
+
+const DEFAULT_IMAGE = 'ghcr.io/navikt/mock-oauth2-server:2.1.0';
+
+export interface MockOauth2ServerOptions {
+  /** Network shared with the SAPL Node so the Node can resolve the issuer hostname. */
+  readonly network: StartedNetwork;
+  /** Network alias the issuer is reachable under (default: `auth-host`). */
+  readonly alias?: string;
+  /** Realm / issuer id segment (default: `default`). */
+  readonly issuerId?: string;
+}
+
+export interface StartedMockOauth2Server {
+  readonly container: StartedTestContainer;
+  /** Issuer URI as the SAPL Node sees it (uses the container alias). */
+  readonly issuerUri: string;
+  /** Issuer URI as host code sees it (uses the mapped port on localhost). */
+  readonly hostIssuerUri: string;
+  /** Token endpoint URL from the host's perspective. */
+  readonly tokenEndpoint: string;
+  stop(): Promise<void>;
+}
+
+/**
+ * Spins up a Navikt mock-oauth2-server: a lightweight JWT issuer that
+ * accepts any client_credentials request and signs the response with a
+ * generated key, exposing the matching JWKS. Mirrors the choice the
+ * engine-side `RemoteHttpDecisionPointServerIT` made; cheaper than a
+ * full Keycloak realm and produces equivalent JWT validation surface
+ * on the SAPL Node side.
+ */
+export async function startMockOauth2Server(
+  options: MockOauth2ServerOptions,
+): Promise<StartedMockOauth2Server> {
+  const alias = options.alias ?? 'auth-host';
+  const issuerId = options.issuerId ?? 'default';
+  const jsonConfig = JSON.stringify({
+    interactiveLogin: false,
+    tokenCallbacks: [
+      {
+        issuerId,
+        requestMappings: [
+          { requestParam: 'grant_type', match: 'client_credentials', claims: { sub: 'sapl-client' } },
+        ],
+      },
+    ],
+  });
+
+  const container = await new GenericContainer(DEFAULT_IMAGE)
+    .withNetwork(options.network)
+    .withNetworkAliases(alias)
+    .withExposedPorts(OAUTH_PORT)
+    .withEnvironment({ JSON_CONFIG: jsonConfig, MOCK_OAUTH2_SERVER_HOSTNAME: alias })
+    .withWaitStrategy(
+      Wait.forHttp(`/${issuerId}/.well-known/openid-configuration`, OAUTH_PORT).forStatusCode(200),
+    )
+    .withStartupTimeout(STARTUP_TIMEOUT_MS)
+    .start();
+
+  const host = container.getHost();
+  const mapped = container.getMappedPort(OAUTH_PORT);
+  return {
+    container,
+    issuerUri: `http://${alias}:${OAUTH_PORT}/${issuerId}`,
+    hostIssuerUri: `http://${host}:${mapped}/${issuerId}`,
+    tokenEndpoint: `http://${host}:${mapped}/${issuerId}/token`,
+    async stop() {
+      await container.stop();
+    },
+  };
+}

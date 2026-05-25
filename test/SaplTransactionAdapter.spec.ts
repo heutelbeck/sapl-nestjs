@@ -1,14 +1,15 @@
 import { SaplTransactionAdapter } from '../lib/SaplTransactionAdapter';
 
-jest.mock('@nestjs-cls/transactional', () => ({
-  TransactionHost: class TransactionHost {},
-}), { virtual: true });
+jest.mock(
+  '@nestjs-cls/transactional',
+  () => ({
+    TransactionHost: class TransactionHost {},
+  }),
+  { virtual: true },
+);
 
 describe('SaplTransactionAdapter', () => {
-  function createAdapter(
-    enabled: boolean,
-    moduleRefBehavior: 'returns-host' | 'throws' = 'returns-host',
-  ) {
+  function createAdapter(enabled: boolean, moduleRefBehavior: 'returns-host' | 'throws' = 'returns-host') {
     const mockHost = {
       withTransaction: jest.fn(async (fn: () => Promise<any>) => fn()),
     };
@@ -18,10 +19,10 @@ describe('SaplTransactionAdapter', () => {
         return mockHost;
       }),
     };
-    const adapter = new SaplTransactionAdapter(
-      moduleRef as any,
-      { baseUrl: 'https://localhost:8443', transactional: enabled },
-    );
+    const adapter = new SaplTransactionAdapter(moduleRef as any, {
+      baseUrl: 'https://localhost:8443',
+      transactional: enabled,
+    });
     return { adapter, moduleRef, mockHost };
   }
 

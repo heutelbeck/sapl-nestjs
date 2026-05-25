@@ -1,9 +1,20 @@
 import { ModuleMetadata } from '@nestjs/common';
 import { ClsModuleOptions } from 'nestjs-cls';
+import type { TlsConfig } from './transport/TlsConfig';
 
 export interface SaplModuleOptions {
-  /** Base URL of the SAPL PDP server (e.g., 'https://localhost:8443') */
+  /**
+   * Which transport the PDP client uses. Defaults to `'http'` for backward
+   * compatibility with 1.x. Set to `'rsocket'` to opt into the high-throughput
+   * binary protocol against a SAPL Node listening on its RSocket port.
+   */
+  transport?: 'http' | 'rsocket';
+  /** Base URL of the SAPL PDP server (e.g., 'https://localhost:8443') for the HTTP transport. */
   baseUrl: string;
+  /** RSocket host. Defaults to the hostname extracted from `baseUrl`. Only used when `transport: 'rsocket'`. */
+  rsocketHost?: string;
+  /** RSocket TCP port. Defaults to 7000. Only used when `transport: 'rsocket'`. */
+  rsocketPort?: number;
   /** Bearer token (API key or JWT) for PDP authentication. Mutually exclusive with username/secret. */
   token?: string;
   /** Username for HTTP Basic Auth. Must be used together with `secret`. Mutually exclusive with `token`. */
@@ -18,8 +29,12 @@ export interface SaplModuleOptions {
   streamingRetryBaseDelay?: number;
   /** Maximum backoff delay in ms for streaming reconnection (default: 30000) */
   streamingRetryMaxDelay?: number;
-  /** Set to true to allow unencrypted HTTP connections to the PDP. NOT RECOMMENDED for production. */
-  allowInsecureConnections?: boolean;
+  /**
+   * Optional TLS configuration for the HTTPS connection to the PDP.
+   * Without this the client uses Node's default trust store. Plain
+   * HTTP to a non-loopback host is refused at client construction.
+   */
+  tls?: TlsConfig;
   /** Options merged into ClsModule.forRoot(). Default: { global: true, middleware: { mount: true } } */
   cls?: Partial<ClsModuleOptions>;
   /**
@@ -34,10 +49,7 @@ export interface SaplModuleOptions {
   transactional?: boolean;
 }
 
-export interface SaplModuleAsyncOptions
-  extends Pick<ModuleMetadata, 'imports'> {
-  useFactory: (
-    ...args: any[]
-  ) => Promise<SaplModuleOptions> | SaplModuleOptions;
+export interface SaplModuleAsyncOptions extends Pick<ModuleMetadata, 'imports'> {
+  useFactory: (...args: any[]) => Promise<SaplModuleOptions> | SaplModuleOptions;
   inject?: any[];
 }

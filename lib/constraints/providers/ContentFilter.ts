@@ -2,41 +2,41 @@ import safe from 'safe-regex2';
 
 const BLACK_SQUARE = '\u2588';
 
-function getByPath(obj: any, segments: string[]): any {
-  let current = obj;
+function getByPath(root: any, segments: string[]): any {
+  let cursor = root;
   for (const segment of segments) {
     if (DANGEROUS_SEGMENTS.has(segment)) return undefined;
-    if (current == null || typeof current !== 'object') return undefined;
-    current = current[segment];
+    if (cursor == null || typeof cursor !== 'object') return undefined;
+    cursor = cursor[segment];
   }
-  return current;
+  return cursor;
 }
 
-function setByPath(obj: any, segments: string[], value: any): void {
-  let current = obj;
-  for (let i = 0; i < segments.length - 1; i++) {
-    if (DANGEROUS_SEGMENTS.has(segments[i])) return;
-    if (current == null || typeof current !== 'object') return;
-    current = current[segments[i]];
+function setByPath(root: any, segments: string[], value: any): void {
+  let cursor = root;
+  for (let depth = 0; depth < segments.length - 1; depth++) {
+    if (DANGEROUS_SEGMENTS.has(segments[depth])) return;
+    if (cursor == null || typeof cursor !== 'object') return;
+    cursor = cursor[segments[depth]];
   }
-  const target = segments[segments.length - 1];
-  if (DANGEROUS_SEGMENTS.has(target)) return;
-  if (current != null && typeof current === 'object') {
-    current[target] = value;
+  const leaf = segments[segments.length - 1];
+  if (DANGEROUS_SEGMENTS.has(leaf)) return;
+  if (cursor != null && typeof cursor === 'object') {
+    cursor[leaf] = value;
   }
 }
 
-function deleteByPath(obj: any, segments: string[]): void {
-  let current = obj;
-  for (let i = 0; i < segments.length - 1; i++) {
-    if (DANGEROUS_SEGMENTS.has(segments[i])) return;
-    if (current == null || typeof current !== 'object') return;
-    current = current[segments[i]];
+function deleteByPath(root: any, segments: string[]): void {
+  let cursor = root;
+  for (let depth = 0; depth < segments.length - 1; depth++) {
+    if (DANGEROUS_SEGMENTS.has(segments[depth])) return;
+    if (cursor == null || typeof cursor !== 'object') return;
+    cursor = cursor[segments[depth]];
   }
-  const target = segments[segments.length - 1];
-  if (DANGEROUS_SEGMENTS.has(target)) return;
-  if (current != null && typeof current === 'object') {
-    delete current[target];
+  const leaf = segments[segments.length - 1];
+  if (DANGEROUS_SEGMENTS.has(leaf)) return;
+  if (cursor != null && typeof cursor === 'object') {
+    delete cursor[leaf];
   }
 }
 
@@ -116,7 +116,7 @@ function requireTextual(action: any, key: string): string {
   return action[key];
 }
 
-function applyAction(obj: any, action: any): void {
+function applyAction(target: any, action: any): void {
   if (action == null || typeof action !== 'object') {
     throw new Error('An action in actions is not an object.');
   }
@@ -127,18 +127,18 @@ function applyAction(obj: any, action: any): void {
 
   switch (actionType) {
     case 'delete': {
-      deleteByPath(obj, segments);
+      deleteByPath(target, segments);
       break;
     }
     case 'replace': {
       if (!('replacement' in action)) {
         throw new Error('The action does not specify a replacement.');
       }
-      setByPath(obj, segments, action.replacement);
+      setByPath(target, segments, action.replacement);
       break;
     }
     case 'blacken': {
-      const currentValue = getByPath(obj, segments);
+      const currentValue = getByPath(target, segments);
       if (typeof currentValue !== 'string') {
         throw new Error('The node identified by the path is not a text node.');
       }
@@ -156,7 +156,7 @@ function applyAction(obj: any, action: any): void {
         throw new Error("'length' of 'blacken' action is not a valid non-negative number.");
       }
       const blackened = blacken(currentValue, replacementChar, discloseLeft, discloseRight, blackenLength);
-      setByPath(obj, segments, blackened);
+      setByPath(target, segments, blackened);
       break;
     }
     default:

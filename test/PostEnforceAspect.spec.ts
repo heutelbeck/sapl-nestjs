@@ -1,298 +1,129 @@
 import { ForbiddenException } from '@nestjs/common';
 import { PostEnforceAspect } from '../lib/PostEnforceAspect';
 import { PdpService } from '../lib/pdp.service';
-import { ConstraintEnforcementService } from '../lib/constraints/ConstraintEnforcementService';
-import { createMockBundle, createMockClsService, createMockTransactionAdapter } from './test-helpers';
+import { EnforcementPlanner } from '../lib/constraints/Planner';
+import { createFakePlanner, createMockClsService, createMockTransactionAdapter } from './test-helpers';
 
 describe('PostEnforceAspect', () => {
   let pdpService: Partial<PdpService>;
-  let constraintService: Partial<ConstraintEnforcementService>;
-  let aspect: PostEnforceAspect;
   let clsMock: ReturnType<typeof createMockClsService>;
+
+  const buildAspect = (planner: EnforcementPlanner, txActive = false) =>
+    new PostEnforceAspect(
+      pdpService as PdpService,
+      clsMock as any,
+      planner,
+      createMockTransactionAdapter(txActive) as any,
+    );
 
   beforeEach(() => {
     pdpService = { decideOnce: jest.fn() };
-    constraintService = {
-      postEnforceBundleFor: jest.fn(),
-      bestEffortBundleFor: jest.fn(),
-    };
     clsMock = createMockClsService();
-    aspect = new PostEnforceAspect(
-      pdpService as PdpService,
-      clsMock as any,
-      constraintService as ConstraintEnforcementService,
-      createMockTransactionAdapter(false) as any,
-    );
   });
 
-  function wrapMethod(
-    method: (...args: any[]) => any,
-    metadata = {},
-    methodName = 'testHandler',
-    instance = { constructor: { name: 'TestController' } },
-  ) {
-    return aspect.wrap({ method, metadata, methodName, instance } as any);
+  function wrap(aspect: PostEnforceAspect, method: (...args: any[]) => any, metadata = {}) {
+    return aspect.wrap({
+      method,
+      metadata,
+      methodName: 'testHandler',
+      instance: { constructor: { name: 'TestController' } },
+    } as any);
   }
 
-  test('whenPermitThenMethodResultReturnedAndBundleLifecycleRuns', async () => {
+  test('whenPermitWithNoConstraintsThenMethodExecutesFirstAndReturnsValue', async () => {
     (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
-    const bundle = createMockBundle();
-    (constraintService.postEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
-    const method = jest.fn().mockResolvedValue({ data: 'result' });
+    const aspect = buildAspect(createFakePlanner());
+    let methodInvokedBeforeDecide = false;
+    const method = jest.fn().mockImplementation(async () => {
+      methodInvokedBeforeDecide = (pdpService.decideOnce as jest.Mock).mock.calls.length === 0;
+      return { data: 'x' };
+    });
 
-    const wrapped = wrapMethod(method);
-    const result = await wrapped();
+    const result = await wrap(aspect, method)();
 
-    expect(result).toEqual({ data: 'result' });
-    expect(bundle.handleOnDecisionConstraints).toHaveBeenCalled();
-    expect(method).toHaveBeenCalled();
+    expect(result).toEqual({ data: 'x' });
+    expect(methodInvokedBeforeDecide).toBe(true);
   });
 
-  test('whenDenyThenThrowsForbiddenExceptionButMethodStillExecuted', async () => {
+  test('whenDenyThenThrowsForbiddenException', async () => {
     (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'DENY' });
-    const bundle = createMockBundle();
-    (constraintService.bestEffortBundleFor as jest.Mock).mockReturnValue(bundle);
-    const method = jest.fn().mockResolvedValue({ data: 'test' });
+    const aspect = buildAspect(createFakePlanner());
+    const method = jest.fn().mockResolvedValue({ data: 'x' });
 
-    const wrapped = wrapMethod(method);
-    await expect(wrapped()).rejects.toThrow(ForbiddenException);
-    expect(method).toHaveBeenCalled();
+    await expect(wrap(aspect, method)()).rejects.toThrow(ForbiddenException);
   });
 
-  test('whenDenyWithOnDenyThenReturnsCustomResponse', async () => {
-    const onDeny = jest.fn().mockReturnValue({ denied: true });
-    (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'DENY' });
-    const bundle = createMockBundle();
-    (constraintService.bestEffortBundleFor as jest.Mock).mockReturnValue(bundle);
-    const method = jest.fn().mockResolvedValue({ data: 'test' });
-
-    const wrapped = wrapMethod(method, { onDeny });
-    const result = await wrapped();
-
-    expect(result).toEqual({ denied: true });
-    expect(onDeny).toHaveBeenCalled();
-  });
-
-  test.each([
-    { decision: 'NOT_APPLICABLE', label: 'notApplicable' },
-    { decision: 'INDETERMINATE', label: 'indeterminate' },
-  ])('when$labelThenThrowsForbiddenException', async ({ decision }) => {
-    (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision });
-    const bundle = createMockBundle();
-    (constraintService.bestEffortBundleFor as jest.Mock).mockReturnValue(bundle);
-    const method = jest.fn().mockResolvedValue({ data: 'test' });
-
-    const wrapped = wrapMethod(method);
-    await expect(wrapped()).rejects.toThrow(ForbiddenException);
-  });
-
-  test('whenPermitWithConstraintsThenBundleTransformsResult', async () => {
+  test('whenPermitWithOutputObligationThenResponseIsTransformed', async () => {
     (pdpService.decideOnce as jest.Mock).mockResolvedValue({
       decision: 'PERMIT',
-      obligations: [{ type: 'someObligation' }],
+      obligations: [{ type: 'transform' }],
     });
-    const bundle = createMockBundle({
-      handleAllOnNextConstraints: jest.fn((v) => ({ ...v, transformed: true })),
-    } as any);
-    (constraintService.postEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
-    const method = jest.fn().mockResolvedValue({ data: 'original' });
-
-    const wrapped = wrapMethod(method);
-    const result = await wrapped();
-
-    expect(result).toEqual({ data: 'original', transformed: true });
-  });
-
-  test('whenUnhandledObligationOnPermitWithOnDenyThenCallsOnDeny', async () => {
-    const onDeny = jest.fn().mockReturnValue({ fallback: true });
-    (pdpService.decideOnce as jest.Mock).mockResolvedValue({
-      decision: 'PERMIT',
-      obligations: [{ type: 'unknownObligation' }],
-    });
-    (constraintService.postEnforceBundleFor as jest.Mock).mockImplementation(() => {
-      throw new ForbiddenException('unhandled');
-    });
-    const method = jest.fn().mockResolvedValue({ data: 'original' });
-
-    const wrapped = wrapMethod(method, { onDeny });
-    const result = await wrapped();
-
-    expect(result).toEqual({ fallback: true });
-    expect(onDeny).toHaveBeenCalled();
-  });
-
-  test('whenPermitWithResourceReplacementThenResponseReplaced', async () => {
-    (pdpService.decideOnce as jest.Mock).mockResolvedValue({
-      decision: 'PERMIT',
-      resource: { replaced: true },
-    });
-    const bundle = createMockBundle({
-      handleAllOnNextConstraints: jest.fn(() => ({ replaced: true })),
-    } as any);
-    (constraintService.postEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
-    const method = jest.fn().mockResolvedValue({ data: 'original' });
-
-    const wrapped = wrapMethod(method);
-    const result = await wrapped();
-
-    expect(result).toEqual({ replaced: true });
-  });
-
-  test('whenReturnValueThenAvailableInSubscriptionCallbacks', async () => {
-    let capturedSubscription: any;
-    const resourceCallback = jest.fn((ctx) => ({
-      type: 'record',
-      data: ctx.returnValue,
-    }));
-
-    (pdpService.decideOnce as jest.Mock).mockImplementation(async (sub) => {
-      capturedSubscription = sub;
-      return { decision: 'PERMIT' };
-    });
-    const bundle = createMockBundle();
-    (constraintService.postEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
-    const method = jest.fn().mockResolvedValue({ id: 42, value: 'data' });
-
-    const wrapped = wrapMethod(method, { resource: resourceCallback });
-    await wrapped();
-
-    expect(resourceCallback).toHaveBeenCalledWith(
-      expect.objectContaining({ returnValue: { id: 42, value: 'data' } }),
+    const aspect = buildAspect(
+      createFakePlanner({
+        onOutput: (v) => ({ ...(v as object), redacted: true }),
+      }),
     );
-    expect(capturedSubscription).toEqual(expect.objectContaining({
-      resource: { type: 'record', data: { id: 42, value: 'data' } },
-      subject: expect.anything(),
-      action: expect.anything(),
-      environment: expect.anything(),
-    }));
+    const method = jest.fn().mockResolvedValue({ secret: 'foo', other: 'bar' });
+
+    const result = await wrap(aspect, method)();
+
+    expect(result).toEqual({ secret: 'foo', other: 'bar', redacted: true });
   });
 
-  test('whenOnNextConstraintThrowsThenErrorHandlersRunBeforeDeny', async () => {
+  test('whenOutputHandlerThrowsObligationFailureThenDeny', async () => {
+    (pdpService.decideOnce as jest.Mock).mockResolvedValue({
+      decision: 'PERMIT',
+      obligations: [{ type: 'fail' }],
+    });
+    const aspect = buildAspect(
+      createFakePlanner({
+        onOutput: () => {
+          throw new Error('output handler failed');
+        },
+      }),
+    );
+    const method = jest.fn().mockResolvedValue({ data: 'x' });
+
+    await expect(wrap(aspect, method)()).rejects.toThrow(ForbiddenException);
+  });
+
+  test('whenUnresolvedObligationOnPermitThenThrows', async () => {
+    (pdpService.decideOnce as jest.Mock).mockResolvedValue({
+      decision: 'PERMIT',
+      obligations: [{ type: 'unknown' }],
+    });
+    const aspect = buildAspect(createFakePlanner());
+    const method = jest.fn().mockResolvedValue({ data: 'x' });
+
+    await expect(wrap(aspect, method)()).rejects.toThrow(ForbiddenException);
+  });
+
+  test('whenTransactionalThenAdapterWrapsTheWholeFlow', async () => {
     (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
-    const bundle = createMockBundle({
-      handleAllOnNextConstraints: jest.fn(() => { throw new Error('onNext failed'); }),
-      handleAllOnErrorConstraints: jest.fn((e) => e),
-    } as any);
-    (constraintService.postEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
-    const method = jest.fn().mockResolvedValue({ data: 'test' });
+    const txAdapter = createMockTransactionAdapter(true);
+    const aspect = new PostEnforceAspect(
+      pdpService as PdpService,
+      clsMock as any,
+      createFakePlanner(),
+      txAdapter as any,
+    );
+    const method = jest.fn().mockResolvedValue({ data: 'x' });
 
-    const wrapped = wrapMethod(method);
-    await expect(wrapped()).rejects.toThrow(ForbiddenException);
-    expect(bundle.handleAllOnErrorConstraints).toHaveBeenCalled();
+    await wrap(aspect, method)();
+
+    expect(txAdapter.withTransaction).toHaveBeenCalled();
   });
 
-  describe('DENY with obligations', () => {
-    test('whenDenyWithObligationsThenBestEffortBundleRunsOnDecisionHandlers', async () => {
-      (pdpService.decideOnce as jest.Mock).mockResolvedValue({
-        decision: 'DENY',
-        obligations: [{ type: 'auditLog' }],
-      });
-      const bundle = createMockBundle();
-      (constraintService.bestEffortBundleFor as jest.Mock).mockReturnValue(bundle);
-      const method = jest.fn().mockResolvedValue({ data: 'result' });
-
-      const wrapped = wrapMethod(method);
-      await expect(wrapped()).rejects.toThrow(ForbiddenException);
-
-      expect(constraintService.bestEffortBundleFor).toHaveBeenCalledWith(
-        expect.objectContaining({ decision: 'DENY', obligations: [{ type: 'auditLog' }] }),
-      );
-      expect(bundle.handleOnDecisionConstraints).toHaveBeenCalled();
-      expect(method).toHaveBeenCalled();
+  test('whenPermitWithResourceFieldThenSubstitutionOverridesMethodResult', async () => {
+    (pdpService.decideOnce as jest.Mock).mockResolvedValue({
+      decision: 'PERMIT',
+      resource: { substituted: true },
     });
+    const aspect = buildAspect(createFakePlanner());
+    const method = jest.fn().mockResolvedValue({ original: true });
 
-    test('whenDenyWithObligationsAndOnDenyThenBestEffortRunsThenOnDenyCalled', async () => {
-      const onDeny = jest.fn().mockReturnValue({ denied: true });
-      (pdpService.decideOnce as jest.Mock).mockResolvedValue({
-        decision: 'DENY',
-        obligations: [{ type: 'auditLog' }],
-      });
-      const bundle = createMockBundle();
-      (constraintService.bestEffortBundleFor as jest.Mock).mockReturnValue(bundle);
-      const method = jest.fn().mockResolvedValue({ data: 'result' });
+    const result = await wrap(aspect, method)();
 
-      const wrapped = wrapMethod(method, { onDeny });
-      const result = await wrapped();
-
-      expect(result).toEqual({ denied: true });
-      expect(bundle.handleOnDecisionConstraints).toHaveBeenCalled();
-      expect(onDeny).toHaveBeenCalled();
-    });
-
-    test('whenDenyWithBestEffortHandlerFailureThenStillDenies', async () => {
-      (pdpService.decideOnce as jest.Mock).mockResolvedValue({
-        decision: 'DENY',
-        obligations: [{ type: 'failing' }],
-      });
-      const bundle = createMockBundle({
-        handleOnDecisionConstraints: jest.fn(() => { throw new Error('handler failed'); }),
-      } as any);
-      (constraintService.bestEffortBundleFor as jest.Mock).mockReturnValue(bundle);
-      const method = jest.fn().mockResolvedValue({ data: 'result' });
-
-      const wrapped = wrapMethod(method);
-      await expect(wrapped()).rejects.toThrow(ForbiddenException);
-      expect(method).toHaveBeenCalled();
-    });
-  });
-
-  describe('transaction integration', () => {
-    let txAdapter: ReturnType<typeof createMockTransactionAdapter>;
-
-    beforeEach(() => {
-      txAdapter = createMockTransactionAdapter(true);
-      aspect = new PostEnforceAspect(
-        pdpService as PdpService,
-        clsMock as any,
-        constraintService as ConstraintEnforcementService,
-        txAdapter as any,
-      );
-    });
-
-    test('whenTransactionalAndDenyThenExceptionPropagatesThroughTransaction', async () => {
-      (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'DENY' });
-      const bundle = createMockBundle();
-      (constraintService.bestEffortBundleFor as jest.Mock).mockReturnValue(bundle);
-      const method = jest.fn().mockResolvedValue({ data: 'result' });
-
-      const wrapped = wrapMethod(method);
-      await expect(wrapped()).rejects.toThrow(ForbiddenException);
-      expect(txAdapter.withTransaction).toHaveBeenCalled();
-      expect(method).toHaveBeenCalled();
-    });
-
-    test('whenTransactionalAndPermitWithConstraintFailureThenExceptionPropagatesThroughTransaction', async () => {
-      (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
-      const bundle = createMockBundle({
-        handleAllOnNextConstraints: jest.fn(() => { throw new Error('constraint failed'); }),
-        handleAllOnErrorConstraints: jest.fn((e) => e),
-      } as any);
-      (constraintService.postEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
-      const method = jest.fn().mockResolvedValue({ data: 'result' });
-
-      const wrapped = wrapMethod(method);
-      await expect(wrapped()).rejects.toThrow(ForbiddenException);
-      expect(txAdapter.withTransaction).toHaveBeenCalled();
-    });
-
-    test('whenNotTransactionalThenWithTransactionNotCalled', async () => {
-      const inactiveAdapter = createMockTransactionAdapter(false);
-      aspect = new PostEnforceAspect(
-        pdpService as PdpService,
-        clsMock as any,
-        constraintService as ConstraintEnforcementService,
-        inactiveAdapter as any,
-      );
-
-      (pdpService.decideOnce as jest.Mock).mockResolvedValue({ decision: 'PERMIT' });
-      const bundle = createMockBundle();
-      (constraintService.postEnforceBundleFor as jest.Mock).mockReturnValue(bundle);
-      const method = jest.fn().mockResolvedValue({ data: 'ok' });
-
-      const wrapped = wrapMethod(method);
-      await wrapped();
-
-      expect(inactiveAdapter.withTransaction).not.toHaveBeenCalled();
-    });
+    expect(result).toEqual({ substituted: true });
   });
 });

@@ -22,19 +22,22 @@ export class SaplTransactionAdapter {
     this.resolved = true;
     if (!this.enabled) return;
     try {
+      // Optional peer dependency: load lazily so projects without the
+      // transactional CLS plugin don't fail at import time.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { TransactionHost } = require('@nestjs-cls/transactional');
       this.host = this.moduleRef.get(TransactionHost, { strict: false });
     } catch {
       this.logger.warn(
-        'transactional: true but @nestjs-cls/transactional is not available. '
-        + 'Install @nestjs-cls/transactional and register ClsPluginTransactional to enable transaction wrapping.',
+        'transactional: true but @nestjs-cls/transactional is not available. ' +
+          'Install @nestjs-cls/transactional and register ClsPluginTransactional to enable transaction wrapping.',
       );
     }
   }
 
-  async withTransaction<T>(fn: () => Promise<T>): Promise<T> {
+  async withTransaction<T>(operation: () => Promise<T>): Promise<T> {
     this.resolve();
-    return this.host ? this.host.withTransaction(fn) : fn();
+    return this.host ? this.host.withTransaction(operation) : operation();
   }
 
   get isActive(): boolean {

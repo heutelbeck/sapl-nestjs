@@ -1,0 +1,5 @@
+{
+  "entry": ["lib/index.ts!"],
+  "project": ["lib/**/*.ts!", "test/**/*.ts"],
+  "ignoreDependencies": ["@nestjs-cls/transactional"]
+}

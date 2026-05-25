@@ -2,7 +2,7 @@ import { ClsService, CLS_REQ } from 'nestjs-cls';
 import { buildContext, buildSubscriptionFromContext } from '../lib/SubscriptionBuilder';
 
 function mockCls(request: any): ClsService {
-  return { get: (key: any) => key === CLS_REQ ? request : undefined } as any;
+  return { get: (key: any) => (key === CLS_REQ ? request : undefined) } as any;
 }
 
 describe('SubscriptionBuilder', () => {
@@ -80,12 +80,15 @@ describe('SubscriptionBuilder', () => {
     test('whenLiteralOverridesThenUsesLiterals', () => {
       const ctx = buildContext(mockCls(request), 'create', 'UserController', []);
 
-      const sub = buildSubscriptionFromContext({
-        subject: 'custom-subject',
-        action: 'custom-action',
-        resource: { custom: true },
-        environment: 'prod',
-      }, ctx);
+      const sub = buildSubscriptionFromContext(
+        {
+          subject: 'custom-subject',
+          action: 'custom-action',
+          resource: { custom: true },
+          environment: 'prod',
+        },
+        ctx,
+      );
 
       expect(sub.subject).toBe('custom-subject');
       expect(sub.action).toBe('custom-action');
@@ -96,10 +99,13 @@ describe('SubscriptionBuilder', () => {
     test('whenCallbackOverridesThenCallsWithContext', () => {
       const ctx = buildContext(mockCls(request), 'create', 'UserController', []);
 
-      const sub = buildSubscriptionFromContext({
-        subject: (c: any) => c.request.user.sub,
-        resource: (c: any) => ({ entityId: c.params.id }),
-      }, ctx);
+      const sub = buildSubscriptionFromContext(
+        {
+          subject: (c: any) => c.request.user.sub,
+          resource: (c: any) => ({ entityId: c.params.id }),
+        },
+        ctx,
+      );
 
       expect(sub.subject).toBe('alice');
       expect(sub.resource).toEqual({ entityId: '42' });
@@ -108,9 +114,12 @@ describe('SubscriptionBuilder', () => {
     test('whenSecretsProvidedThenIncludedInSubscription', () => {
       const ctx = buildContext(mockCls(request), 'create', 'UserController', []);
 
-      const sub = buildSubscriptionFromContext({
-        secrets: { apiKey: 'secret-123' },
-      }, ctx);
+      const sub = buildSubscriptionFromContext(
+        {
+          secrets: { apiKey: 'secret-123' },
+        },
+        ctx,
+      );
 
       expect(sub.secrets).toEqual({ apiKey: 'secret-123' });
     });
