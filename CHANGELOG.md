@@ -63,4 +63,6 @@ streaming decorators into one.
 
 ### Notes
 
-- Minimum Node version unchanged at `>= 20.0.0`.
+- **Minimum Node version bumped to `>= 22.0.0`.** `undici@8` (the
+  underlying HTTP/2 client) dropped Node 20 support. CI matrix
+  now runs Node 22 + 24.

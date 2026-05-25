@@ -33,6 +33,8 @@ For SSE endpoints returning `Observable<T>`, the single `@StreamEnforce` decorat
 
 ## Getting Started
 
+Requires Node 22+ and NestJS 11+.
+
 ```bash
 npm install @sapl/nestjs @toss/nestjs-aop nestjs-cls
 ```

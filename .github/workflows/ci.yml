@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [20.x, 22.x]
+        node-version: [22.x, 24.x]
 
     steps:
       - uses: actions/checkout@v4
@@ -22,10 +22,10 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
 
-      # S9: `npm ci` installs strictly from package-lock.json and fails on
-      # any lockfile/package.json drift. The lockfile carries SHA-512
-      # integrity hashes for every resolved tarball, so an upstream
-      # re-publish under an existing version is detected at install time.
+      # `npm ci` installs strictly from package-lock.json and fails on any
+      # lockfile/package.json drift. The lockfile carries SHA-512 integrity
+      # hashes for every resolved tarball, so an upstream re-publish under
+      # an existing version is detected at install time.
       - run: npm ci
       - run: npm run build
       - run: npm test
