@@ -39,12 +39,12 @@ Requires Node 22+ and NestJS 11+.
 npm install @sapl/nestjs @toss/nestjs-aop nestjs-cls
 ```
 
-For setup instructions, configuration options, the constraint handler reference, and the full API, see the [NestJS documentation](https://sapl.io/docs/latest/6_5_NestJS/).
+For setup instructions, configuration options, the constraint handler reference, and the full API, see the [NestJS documentation](https://sapl.io/docs/latest/6_4_NestJS/).
 
 ## Links
 
 - [Full Documentation](https://sapl.io/docs/latest/)
-- [NestJS Integration](https://sapl.io/docs/latest/6_5_NestJS/)
+- [NestJS Integration](https://sapl.io/docs/latest/6_4_NestJS/)
 - [Demo Application](https://github.com/heutelbeck/sapl-nestjs-demo)
 - [Report an Issue](https://github.com/heutelbeck/sapl-nestjs/issues)
 

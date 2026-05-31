@@ -218,6 +218,14 @@ function handleDeny(reason: string): Step {
 }
 
 function handleItem(state: State, enforcementResult: EnforcementResult<unknown>): Step {
+  // Per-item obligation failure is terminal from any non-Terminated
+  // source state (paper Invariant 5: universal fulfillment-failure
+  // termination). The pipeline only attempts per-item enforcement in
+  // Permitting, but the FSM defines this routing over the full domain
+  // so the invariant is a property of δ.
+  if (enforcementResult.failureState) {
+    return stepTo(terminatedState, emitError(new AccessDeniedError('Per-item obligation failure')));
+  }
   switch (state.type) {
     case 'Pending':
     case 'Suspended':
@@ -232,9 +240,6 @@ function permittingItem(
   state: Extract<State, { type: 'Permitting' }>,
   enforcementResult: EnforcementResult<unknown>,
 ): Step {
-  if (enforcementResult.failureState) {
-    return stepTo(terminatedState, emitError(new AccessDeniedError('Per-item obligation failure')));
-  }
   if (enforcementResult.value.type === 'Present') {
     return stepTo(state, emitValue(enforcementResult.value.value));
   }
