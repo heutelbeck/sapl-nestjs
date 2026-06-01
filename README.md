@@ -36,7 +36,7 @@ For SSE endpoints returning `Observable<T>`, the single `@StreamEnforce` decorat
 Requires Node 22+ and NestJS 11+.
 
 ```bash
-npm install @sapl/nestjs @toss/nestjs-aop nestjs-cls
+npm install @sapl/nestjs @toss/nestjs-aop nestjs-cls @nestjs-cls/transactional
 ```
 
 For setup instructions, configuration options, the constraint handler reference, and the full API, see the [NestJS documentation](https://sapl.io/docs/latest/6_4_NestJS/).

@@ -1,6 +1,7 @@
 import { ModuleMetadata } from '@nestjs/common';
 import { ClsModuleOptions } from 'nestjs-cls';
 import type { TlsConfig } from './transport/TlsConfig';
+import type { OAuth2TokenProviderOptions } from './transport/auth/OAuth2TokenProvider';
 
 export interface SaplModuleOptions {
   /**
@@ -21,6 +22,13 @@ export interface SaplModuleOptions {
   username?: string;
   /** Password for HTTP Basic Auth. Must be used together with `username`. Mutually exclusive with `token`. */
   secret?: string;
+  /**
+   * OAuth2 client_credentials configuration. When set, the client obtains
+   * bearer tokens from the configured OIDC issuer with automatic refresh,
+   * instead of a static `token` or `username`/`secret`. Mutually exclusive
+   * with `token` and `username`/`secret`. Applies to both transports.
+   */
+  oauth2?: OAuth2TokenProviderOptions;
   /** Timeout in milliseconds for PDP HTTP requests (default: 5000) */
   timeout?: number;
   /** Maximum reconnection attempts for streaming subscriptions (default: unlimited) */

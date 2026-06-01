@@ -1,4 +1,11 @@
 import { PdpService } from '../lib/pdp.service';
+import { OAuth2TokenProvider } from '../lib/transport/auth/OAuth2TokenProvider';
+
+const OAUTH2_OPTIONS = {
+  issuerUrl: 'https://issuer.example/realms/sapl',
+  clientId: 'sapl-client',
+  clientSecret: 'secret',
+};
 
 function createService(overrides: Record<string, any> = {}): PdpService {
   return new PdpService({
@@ -86,6 +93,41 @@ describe('PdpService', () => {
         'authentication conflict',
       );
     });
+
+    test('whenBothOauth2AndTokenConfiguredThenThrows', () => {
+      expect(() => createService({ token: 'my-token', oauth2: OAUTH2_OPTIONS })).toThrow(
+        'authentication conflict',
+      );
+    });
+
+    test('whenRsocketTransportNonLoopbackWithoutTlsThenThrows', () => {
+      expect(() =>
+        createService({
+          transport: 'rsocket',
+          baseUrl: 'https://pdp.example.com:8443',
+          rsocketHost: 'pdp.example.com',
+        }),
+      ).toThrow('refuses to connect plaintext');
+    });
+
+    test('whenRsocketTransportNonLoopbackWithTlsThenCreatesService', () => {
+      const service = createService({
+        transport: 'rsocket',
+        baseUrl: 'https://pdp.example.com:8443',
+        rsocketHost: 'pdp.example.com',
+        tls: { rejectUnauthorized: false },
+      });
+      expect(service).toBeInstanceOf(PdpService);
+    });
+
+    test('whenRsocketTransportWithOauth2ThenCreatesService', () => {
+      const service = createService({
+        transport: 'rsocket',
+        baseUrl: 'https://localhost:8443',
+        oauth2: OAUTH2_OPTIONS,
+      });
+      expect(service).toBeInstanceOf(PdpService);
+    });
   });
 
   describe('decideOnce', () => {
@@ -150,6 +192,24 @@ describe('PdpService', () => {
 
       const [, init] = (globalThis.fetch as jest.Mock).mock.calls[0];
       expect(init.headers['Authorization']).toBe('Bearer my-token');
+    });
+
+    test('whenOauth2ConfiguredThenAuthorizationHeaderUsesProviderToken', async () => {
+      const getAccessToken = jest
+        .spyOn(OAuth2TokenProvider.prototype, 'getAccessToken')
+        .mockResolvedValue('minted-jwt');
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ decision: 'PERMIT' }),
+      });
+
+      const service = createService({ oauth2: OAUTH2_OPTIONS });
+      await service.decideOnce({ subject: 'user', action: 'read', resource: 'data' });
+
+      const [, init] = (globalThis.fetch as jest.Mock).mock.calls[0];
+      expect(init.headers['Authorization']).toBe('Bearer minted-jwt');
+      expect(getAccessToken).toHaveBeenCalled();
+      getAccessToken.mockRestore();
     });
 
     test('whenResponseBodyMalformedThenResolvesWithIndeterminate', async () => {

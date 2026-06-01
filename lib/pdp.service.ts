@@ -5,6 +5,7 @@ import { SaplModuleOptions } from './sapl.interfaces';
 import { HttpPdpClient } from './transport/HttpPdpClient';
 import type { PdpClient } from './transport/PdpClient';
 import { RsocketPdpClient } from './transport/RsocketPdpClient';
+import { OAuth2TokenProvider } from './transport/auth/OAuth2TokenProvider';
 import type {
   AuthorizationDecision,
   AuthorizationSubscription,
@@ -59,6 +60,7 @@ export class PdpService implements OnModuleDestroy {
 
 function buildClient(options: SaplModuleOptions): PdpClient {
   const transport = options.transport ?? 'http';
+  const oauth2Provider = options.oauth2 ? new OAuth2TokenProvider(options.oauth2) : undefined;
   switch (transport) {
     case 'http':
       return new HttpPdpClient({
@@ -66,6 +68,7 @@ function buildClient(options: SaplModuleOptions): PdpClient {
         token: options.token,
         username: options.username,
         secret: options.secret,
+        tokenProvider: oauth2Provider,
         timeout: options.timeout,
         streamingMaxRetries: options.streamingMaxRetries,
         streamingRetryBaseDelay: options.streamingRetryBaseDelay,
@@ -81,6 +84,9 @@ function buildClient(options: SaplModuleOptions): PdpClient {
             ? { username: options.username, password: options.secret }
             : undefined,
         apiKey: options.token,
+        oauth2Token: oauth2Provider ? () => oauth2Provider.getAccessToken() : undefined,
+        timeoutMs: options.timeout,
+        tls: options.tls,
       });
   }
 }

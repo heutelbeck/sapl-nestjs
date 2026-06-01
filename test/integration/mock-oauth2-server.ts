@@ -38,13 +38,22 @@ export async function startMockOauth2Server(
 ): Promise<StartedMockOauth2Server> {
   const alias = options.alias ?? 'auth-host';
   const issuerId = options.issuerId ?? 'default';
+  const issuerUri = `http://${alias}:${OAUTH_PORT}/${issuerId}`;
+  // Pin the iss claim so minted tokens always carry the network-alias issuer
+  // the SAPL Node validates against, regardless of how the mock is reached.
+  // Host code can then fetch a token over the mapped port with a plain request,
+  // no Host-header spoofing required.
   const jsonConfig = JSON.stringify({
     interactiveLogin: false,
     tokenCallbacks: [
       {
         issuerId,
         requestMappings: [
-          { requestParam: 'grant_type', match: 'client_credentials', claims: { sub: 'sapl-client' } },
+          {
+            requestParam: 'grant_type',
+            match: 'client_credentials',
+            claims: { sub: 'sapl-client', iss: issuerUri },
+          },
         ],
       },
     ],
@@ -65,7 +74,7 @@ export async function startMockOauth2Server(
   const mapped = container.getMappedPort(OAUTH_PORT);
   return {
     container,
-    issuerUri: `http://${alias}:${OAUTH_PORT}/${issuerId}`,
+    issuerUri,
     hostIssuerUri: `http://${host}:${mapped}/${issuerId}`,
     tokenEndpoint: `http://${host}:${mapped}/${issuerId}/token`,
     async stop() {
