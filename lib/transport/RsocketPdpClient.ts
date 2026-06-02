@@ -281,7 +281,9 @@ export class RsocketPdpClient implements PdpClient {
         delay: (_error, retryCount) => {
           const baseDelay = Math.min(this.retryBaseDelay * Math.pow(2, retryCount - 1), this.retryMaxDelay);
           const delay = Math.round(baseDelay * (0.5 + Math.random() * 0.5));
-          this.logger.warn(`RSocket ${label} connection lost, reconnecting in ${delay}ms (attempt ${retryCount}).`);
+          this.logger.warn(
+            `RSocket ${label} connection lost, reconnecting in ${delay}ms (attempt ${retryCount}).`,
+          );
           return timer(delay);
         },
       }),

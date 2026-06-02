@@ -31,8 +31,6 @@ export interface SaplModuleOptions {
   oauth2?: OAuth2TokenProviderOptions;
   /** Timeout in milliseconds for PDP HTTP requests (default: 5000) */
   timeout?: number;
-  /** Maximum reconnection attempts for streaming subscriptions (default: unlimited) */
-  streamingMaxRetries?: number;
   /** Initial delay in ms before first streaming reconnection (default: 1000) */
   streamingRetryBaseDelay?: number;
   /** Maximum backoff delay in ms for streaming reconnection (default: 30000) */

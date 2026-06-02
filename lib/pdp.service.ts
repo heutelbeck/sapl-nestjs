@@ -70,7 +70,6 @@ function buildClient(options: SaplModuleOptions): PdpClient {
         secret: options.secret,
         tokenProvider: oauth2Provider,
         timeout: options.timeout,
-        streamingMaxRetries: options.streamingMaxRetries,
         streamingRetryBaseDelay: options.streamingRetryBaseDelay,
         streamingRetryMaxDelay: options.streamingRetryMaxDelay,
         tls: options.tls,

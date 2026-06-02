@@ -162,7 +162,6 @@ export interface HttpPdpClientOptions {
    */
   readonly tokenProvider?: BearerTokenProvider;
   readonly timeout?: number;
-  readonly streamingMaxRetries?: number;
   readonly streamingRetryBaseDelay?: number;
   readonly streamingRetryMaxDelay?: number;
   /**
@@ -177,7 +176,6 @@ export class HttpPdpClient implements PdpClient {
   private readonly timeoutMs: number;
   private readonly retryBaseDelay: number;
   private readonly retryMaxDelay: number;
-  private readonly maxRetries: number;
   private readonly resolveAuthorization: () => Promise<string | null>;
   private readonly tokenProvider: BearerTokenProvider | undefined;
   private readonly dispatcher: Dispatcher | undefined;
@@ -233,7 +231,6 @@ export class HttpPdpClient implements PdpClient {
     this.timeoutMs = options.timeout ?? DEFAULT_TIMEOUT_MS;
     this.retryBaseDelay = options.streamingRetryBaseDelay ?? DEFAULT_RETRY_BASE_DELAY_MS;
     this.retryMaxDelay = options.streamingRetryMaxDelay ?? DEFAULT_RETRY_MAX_DELAY_MS;
-    this.maxRetries = options.streamingMaxRetries ?? Infinity;
     this.logger.log(`HttpPdpClient configured at ${options.baseUrl}`);
   }
 
@@ -523,13 +520,12 @@ export class HttpPdpClient implements PdpClient {
     });
     return singleAttempt$.pipe(
       retry({
-        count: this.maxRetries,
+        count: Infinity,
         delay: (_error, retryCount) => {
           const baseDelay = Math.min(this.retryBaseDelay * Math.pow(2, retryCount - 1), this.retryMaxDelay);
           const delay = Math.round(baseDelay * (0.5 + Math.random() * 0.5));
           this.logger.warn(
-            `PDP streaming connection lost, reconnecting in ${delay}ms` +
-              ` (attempt ${retryCount}${this.maxRetries === Infinity ? '' : `/${this.maxRetries}`})`,
+            `PDP streaming connection lost, reconnecting in ${delay}ms (attempt ${retryCount})`,
           );
           return timer(delay);
         },
