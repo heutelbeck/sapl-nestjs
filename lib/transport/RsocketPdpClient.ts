@@ -8,7 +8,8 @@ import {
 import { TcpClientTransport } from '@rsocket/tcp-client';
 import * as tls from 'node:tls';
 import * as net from 'node:net';
-import { Observable } from 'rxjs';
+import { isDeepStrictEqual } from 'node:util';
+import { distinctUntilChanged, Observable, retry, timer } from 'rxjs';
 import type {
   AuthorizationDecision,
   AuthorizationSubscription,
@@ -27,6 +28,8 @@ const isLoopback = (host: string): boolean => LOOPBACK_HOSTS.has(host.toLowerCas
 const DEFAULT_KEEPALIVE_INTERVAL_MS = 30_000;
 const DEFAULT_KEEPALIVE_LIFETIME_MS = 60_000;
 const DEFAULT_TIMEOUT_MS = 5000;
+const DEFAULT_RETRY_BASE_DELAY_MS = 1000;
+const DEFAULT_RETRY_MAX_DELAY_MS = 30_000;
 
 const ERROR_RSOCKET_HOST_REQUIRED = 'RsocketPdpClient requires a non-empty host.';
 const ERROR_RSOCKET_PORT_REQUIRED = 'RsocketPdpClient requires a positive port number.';
@@ -64,6 +67,10 @@ export interface RsocketPdpClientOptions {
    * network is unsafe).
    */
   readonly tls?: TlsConfig;
+  /** Base delay (ms) for the streaming reconnect backoff. */
+  readonly streamingRetryBaseDelayMs?: number;
+  /** Maximum delay (ms) the streaming reconnect backoff caps at. */
+  readonly streamingRetryMaxDelayMs?: number;
 }
 
 /**
@@ -78,6 +85,8 @@ export class RsocketPdpClient implements PdpClient {
   private readonly keepAliveInterval: number;
   private readonly keepAliveLifetime: number;
   private readonly timeoutMs: number;
+  private readonly retryBaseDelay: number;
+  private readonly retryMaxDelay: number;
   private socketPromise: Promise<RSocket> | null = null;
 
   constructor(private readonly options: RsocketPdpClientOptions) {
@@ -99,6 +108,8 @@ export class RsocketPdpClient implements PdpClient {
     this.keepAliveInterval = options.keepAliveIntervalMs ?? DEFAULT_KEEPALIVE_INTERVAL_MS;
     this.keepAliveLifetime = options.keepAliveLifetimeMs ?? DEFAULT_KEEPALIVE_LIFETIME_MS;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.retryBaseDelay = options.streamingRetryBaseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS;
+    this.retryMaxDelay = options.streamingRetryMaxDelayMs ?? DEFAULT_RETRY_MAX_DELAY_MS;
   }
 
   async decideOnce(subscription: AuthorizationSubscription): Promise<AuthorizationDecision> {
@@ -112,12 +123,11 @@ export class RsocketPdpClient implements PdpClient {
   }
 
   decide(subscription: AuthorizationSubscription): Observable<AuthorizationDecision> {
-    // Subscribers needing fail-closed semantics compose with `catchError`.
-    return this.requestStreamObs(
+    return this.requestStreamObs<AuthorizationDecision>(
       PDP_ROUTE.DECIDE,
       getCodec().encodeSubscription(subscription),
       (data) => getCodec().decodeDecision(data),
-      undefined,
+      () => [{ decision: 'INDETERMINATE' }],
       'decide',
     );
   }
@@ -135,21 +145,31 @@ export class RsocketPdpClient implements PdpClient {
   }
 
   multiDecide(subscription: MultiAuthorizationSubscription): Observable<IdentifiableAuthorizationDecision> {
-    return this.requestStreamObs(
+    return this.requestStreamObs<IdentifiableAuthorizationDecision>(
       PDP_ROUTE.MULTI_DECIDE,
       getCodec().encodeMultiSubscription(subscription),
       (data) => getCodec().decodeIdentifiableDecision(data),
-      undefined,
+      () =>
+        Object.keys(subscription.subscriptions).map((id) => ({
+          subscriptionId: id,
+          decision: { decision: 'INDETERMINATE' },
+        })),
       'multiDecide',
     );
   }
 
   multiDecideAll(subscription: MultiAuthorizationSubscription): Observable<MultiAuthorizationDecision> {
-    return this.requestStreamObs(
+    return this.requestStreamObs<MultiAuthorizationDecision>(
       PDP_ROUTE.MULTI_DECIDE_ALL,
       getCodec().encodeMultiSubscription(subscription),
       (data) => getCodec().decodeMultiDecision(data),
-      undefined,
+      () => [
+        {
+          decisions: Object.fromEntries(
+            Object.keys(subscription.subscriptions).map((id) => [id, { decision: 'INDETERMINATE' }]),
+          ),
+        },
+      ],
       'multiDecideAll',
     );
   }
@@ -213,12 +233,20 @@ export class RsocketPdpClient implements PdpClient {
     route: string,
     data: Buffer,
     decoder: (raw: Buffer) => TOut,
-    fallbackOnError: TOut | undefined,
+    fallback: () => TOut[],
     label: string,
   ): Observable<TOut> {
-    return new Observable<TOut>((subscriber) => {
+    // Subscription. Never terminates on a transport error or a server-side stream
+    // completion: emits INDETERMINATE and reconnects with bounded exponential
+    // backoff, forever. Ends only when the consumer unsubscribes. One INDETERMINATE
+    // per outage (distinctUntilChanged).
+    const singleAttempt$ = new Observable<TOut>((subscriber) => {
       let cancellable: { cancel: () => void } | null = null;
       let cancelled = false;
+      const fail = (cause: unknown): void => {
+        for (const value of fallback()) subscriber.next(value);
+        subscriber.error(new Error(`RSocket ${label} stream interrupted`, { cause }));
+      };
       this.connect()
         .then(async (socket) => {
           if (cancelled) return;
@@ -230,30 +258,35 @@ export class RsocketPdpClient implements PdpClient {
                   subscriber.next(decoder(payload.data));
                 } catch (error) {
                   this.logger.error(`RSocket ${label} decode failure: ${String(error)}`);
-                  if (fallbackOnError !== undefined) subscriber.next(fallbackOnError);
+                  fail(error);
+                  return;
                 }
               }
-              if (isComplete) {
-                subscriber.complete();
-              }
+              if (isComplete) fail(new Error(`RSocket ${label} stream ended`));
             },
-            onError: (error) => {
-              if (fallbackOnError !== undefined) subscriber.next(fallbackOnError);
-              subscriber.error(new Error(`RSocket ${label} failed`, { cause: error }));
-            },
-            onComplete: () => subscriber.complete(),
+            onError: (error) => fail(error),
+            onComplete: () => fail(new Error(`RSocket ${label} stream ended`)),
             onExtension: () => undefined,
           });
         })
-        .catch((error: unknown) => {
-          if (fallbackOnError !== undefined) subscriber.next(fallbackOnError);
-          subscriber.error(new Error(`RSocket ${label} transport failure`, { cause: error }));
-        });
+        .catch((error: unknown) => fail(error));
       return () => {
         cancelled = true;
         cancellable?.cancel();
       };
     });
+    return singleAttempt$.pipe(
+      retry({
+        count: Infinity,
+        delay: (_error, retryCount) => {
+          const baseDelay = Math.min(this.retryBaseDelay * Math.pow(2, retryCount - 1), this.retryMaxDelay);
+          const delay = Math.round(baseDelay * (0.5 + Math.random() * 0.5));
+          this.logger.warn(`RSocket ${label} connection lost, reconnecting in ${delay}ms (attempt ${retryCount}).`);
+          return timer(delay);
+        },
+      }),
+      distinctUntilChanged<TOut>(isDeepStrictEqual),
+    );
   }
 
   async close(): Promise<void> {
