@@ -6,6 +6,8 @@ import { SubscriptionOptions } from './SubscriptionOptions';
 import { EnforcementPlanner } from './constraints/Planner';
 import { EnforcementPlan } from './constraints/Plan';
 import type { SignalKind } from './constraints/Signal';
+import { shimSignals } from './constraints/ShimSignalRegistry';
+import { setActivePlan } from './constraints/ActivePlan';
 import { PdpService } from './pdp.service';
 import { buildContext, buildSubscriptionFromContext } from './SubscriptionBuilder';
 import { handleDeny } from './enforcement-utils';
@@ -51,7 +53,8 @@ export class PreEnforceAspect implements LazyDecorator<any, SubscriptionOptions>
     method: (...args: any[]) => any,
     args: any[],
   ): Promise<any> {
-    const plan = this.planner.plan(decision, PRE_SIGNALS);
+    const supportedSignals = new Set<SignalKind>([...PRE_SIGNALS, ...shimSignals()]);
+    const plan = this.planner.plan(decision, supportedSignals);
 
     const decisionResult = plan.execute({ kind: 'decision', value: decision });
     if (decisionResult.failureState) {
@@ -70,6 +73,10 @@ export class PreEnforceAspect implements LazyDecorator<any, SubscriptionOptions>
         : args;
 
     const invokeAndEnforce = async () => {
+      // Expose the plan to data-layer shims (Mongoose/Prisma) that
+      // discharge their query-manipulation signal during the method's
+      // DB calls. CLS propagates it across the awaited async context.
+      setActivePlan(this.cls, plan);
       let result;
       try {
         result = await method(...effectiveArgs);

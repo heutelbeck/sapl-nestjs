@@ -22,6 +22,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./mongoose": {
+      "types": "./dist/mongoose/index.d.ts",
+      "default": "./dist/mongoose/index.js"
     }
   },
   "files": [
@@ -48,12 +52,16 @@
     "@nestjs/common": "^11.0.0",
     "@nestjs/core": "^11.0.0",
     "@toss/nestjs-aop": "^2.1.0",
+    "mongoose": ">=7.0.0",
     "nestjs-cls": "^6.0.0",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.0.0"
   },
   "peerDependenciesMeta": {
     "@nestjs-cls/transactional": {
+      "optional": true
+    },
+    "mongoose": {
       "optional": true
     }
   },
@@ -70,6 +78,7 @@
     "eslint-plugin-prettier": "^5.5.5",
     "jest": "^30.0.0",
     "knip": "^6.14.2",
+    "mongoose": "^9.6.3",
     "nestjs-cls": "^6.2.0",
     "prettier": "^3.8.3",
     "reflect-metadata": "^0.2.0",

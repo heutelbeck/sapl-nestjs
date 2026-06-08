@@ -29,3 +29,49 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    # Integration tests use testcontainers: Mongo (and Postgres for the
+    # Prisma shim) come up per-test, while the PDP transport tests need a
+    # sapl-node image. The image is built from the sapl-policy-engine
+    # source so the IT suite always runs against the matching engine
+    # snapshot rather than a separately published tag.
+    env:
+      SAPL_NODE_IMAGE: sapl-node:4.1.0-SNAPSHOT
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out sapl-policy-engine (4.1.0)
+        uses: actions/checkout@v4
+        with:
+          repository: heutelbeck/sapl-policy-engine
+          ref: '4.1.0'
+          path: sapl-policy-engine
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # Build the engine and package the sapl-node image with Spring Boot
+      # buildpacks, overriding the image name to the local tag the IT suite
+      # resolves via SAPL_NODE_IMAGE. -am builds the module's reactor
+      # dependencies in the same invocation.
+      - name: Build sapl-node image
+        working-directory: sapl-policy-engine
+        run: |
+          mvn -B -ntp -DskipTests -pl sapl-node -am install
+          mvn -B -ntp -pl sapl-node spring-boot:build-image -Dspring-boot.build-image.imageName=$SAPL_NODE_IMAGE
+
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test:it

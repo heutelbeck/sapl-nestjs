@@ -46,3 +46,8 @@ export { SaplConstraintHandler, ConstraintHandlerType } from './constraints/Sapl
 
 // Constraint enforcement planner
 export { EnforcementPlanner } from './constraints/Planner';
+export { EnforcementPlan } from './constraints/Plan';
+
+// Data-layer shim support (Mongoose / Prisma query-manipulation shims)
+export { registerShimSignal, unregisterShimSignal, shimSignals } from './constraints/ShimSignalRegistry';
+export { activePlan, setActivePlan, ACTIVE_PLAN_KEY } from './constraints/ActivePlan';

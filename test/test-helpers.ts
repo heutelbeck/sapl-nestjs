@@ -74,8 +74,13 @@ export function createMockRequest(overrides: Record<string, any> = {}) {
 
 export function createMockClsService(requestOverrides: Record<string, any> = {}) {
   const request = createMockRequest(requestOverrides);
+  const store = new Map<any, any>();
   return {
-    get: jest.fn((key: any) => (key === CLS_REQ ? request : undefined)),
+    get: jest.fn((key: any) => (key === CLS_REQ ? request : store.get(key))),
+    set: jest.fn((key: any, value: any) => {
+      store.set(key, value);
+    }),
+    isActive: jest.fn(() => true),
     request,
   };
 }
