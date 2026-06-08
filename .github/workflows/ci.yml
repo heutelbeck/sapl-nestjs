@@ -37,8 +37,11 @@ jobs:
     # sapl-node image. The image is built from the sapl-policy-engine
     # source so the IT suite always runs against the matching engine
     # snapshot rather than a separately published tag.
+    # The image is tagged with the fully-qualified name the IT suite resolves
+    # by default, so testcontainers finds the locally-built image and does not
+    # attempt a registry pull (a bare name would normalize to docker.io and 404).
     env:
-      SAPL_NODE_IMAGE: sapl-node:4.1.0-SNAPSHOT
+      SAPL_NODE_IMAGE: ghcr.io/heutelbeck/sapl-node:4.1.0-SNAPSHOT
     steps:
       - uses: actions/checkout@v4
 
@@ -64,7 +67,7 @@ jobs:
         working-directory: sapl-policy-engine
         run: |
           mvn -B -ntp -DskipTests -pl sapl-node -am install
-          mvn -B -ntp -pl sapl-node spring-boot:build-image -Dspring-boot.build-image.imageName=$SAPL_NODE_IMAGE
+          mvn -B -ntp -pl sapl-node spring-boot:build-image -Dspring-boot.build-image.imageName="$SAPL_NODE_IMAGE"
 
       - name: Use Node.js 24.x
         uses: actions/setup-node@v4
