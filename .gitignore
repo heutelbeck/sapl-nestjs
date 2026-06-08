@@ -15,3 +15,4 @@ coverage/
 
 # npm
 *.tgz
+test/integration/prisma/generated/

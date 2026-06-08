@@ -1,0 +1,14 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "./generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Widget {
+  id       Int    @id @default(autoincrement())
+  name     String
+  tenantId Int
+}
