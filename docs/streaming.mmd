@@ -28,7 +28,7 @@ sequenceDiagram
         Stream-->>Stream: ACCESS_SUSPENDED event
         rect rgb(220, 245, 220)
             PDP->>Stream: PERMIT
-            Stream-->>Stream: ACCESS_RESTORED event
+            Stream-->>Stream: ACCESS_GRANTED event
             Note over Stream: Events resume
         end
     end
