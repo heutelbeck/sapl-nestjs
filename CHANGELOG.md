@@ -2,19 +2,18 @@
 
 ## 2.0.0 — 2026-05-25
 
-Major release. Re-architects enforcement from the legacy
-constraint-bundle model to the SAPL 4.1 planner + `@StreamEnforce`
-model; adds RSocket transport, support for the new `SUSPEND` decision
-verb, and data-layer query rewriting (Mongoose + Prisma).
+Replaces the 1.x enforcement model with the SAPL 4.1 planner and a single
+`@StreamEnforce` decorator. Adds the RSocket transport, the `SUSPEND`
+decision verb, and data-layer query rewriting for Mongoose and Prisma.
 
 ### Breaking changes
 
-- **Enforcement re-architected to a planner + signal model.** The
-  legacy `ConstraintEnforcementService` / `ConstraintHandlerBundle`
-  model is replaced by an `EnforcementPlanner` that binds constraint
-  handlers to lifecycle signals (`decision` / `input` / `output` /
-  `error`, and the streaming signals). The `ConstraintHandlerProvider`
-  interface changed shape: a provider now returns scoped handlers
+- **Enforcement now uses a planner and signal model.** The
+  `ConstraintEnforcementService` / `ConstraintHandlerBundle` model is
+  replaced by an `EnforcementPlanner` that binds constraint handlers to
+  lifecycle signals (`decision` / `input` / `output` / `error`, and the
+  streaming signals). The `ConstraintHandlerProvider` interface changed:
+  a provider returns scoped handlers
   (`getHandlers(constraint): ScopedHandler[]`) targeting a signal,
   rather than the 1.x bundle API. Custom 1.x constraint handlers must
   be rewritten against the new interface.
@@ -66,7 +65,7 @@ verb, and data-layer query rewriting (Mongoose + Prisma).
 - Integration test suite (`npm run test:it`) against a real SAPL
   Node container, covering HTTP and RSocket with each auth mode.
 - Data-layer query rewriting: a `mongo:queryRewriting` /
-  `sql:queryRewriting` obligation transparently narrows the queries an
+  `sql:queryRewriting` obligation narrows the queries an
   enforced method issues, fail-closed and narrowing-only. `@sapl/nestjs/mongoose`
   (Mongoose plugin + `MongoDbQueryRewritingProvider`) and `@sapl/nestjs/prisma`
   (Prisma client extension + `SqlQueryRewritingProvider`) ship as subpath
