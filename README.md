@@ -31,6 +31,8 @@ SAPL goes beyond simple permit/deny. Decisions can carry obligations that must b
 
 For SSE endpoints returning `Observable<T>`, the single `@StreamEnforce` decorator (introduced in 2.0; replaces the legacy `@EnforceTillDenied` / `@EnforceDropWhileDenied` / `@EnforceRecoverableIfDenied` trio) maintains a live connection to the PDP, so access rights update in real time as policies, attributes, or the environment change. The two flags `signalTransitions` and `pauseRapDuringSuspend` plus the subscriber-side `TransitionSignals` operators express the suspend / drop / pause variants that the three legacy decorators encoded separately. Transaction integration via `@nestjs-cls/transactional` ensures that obligation failures after a database write trigger a rollback. Built-in constraint handlers cover JSON field redaction and collection filtering. Writing custom handlers follows standard NestJS patterns with `@Injectable()` and `@SaplConstraintHandler()`. Connection to the SAPL Node is HTTP by default; set `transport: 'rsocket'` in `SaplModule.forRoot(...)` to opt into the high-throughput binary path. See `CHANGELOG.md` for the full migration table.
 
+Data-layer query rewriting narrows results at the database rather than in memory. A policy attaches a `mongo:queryRewriting` or `sql:queryRewriting` obligation, and the matching shim transparently rewrites the queries an enforced method issues, fail-closed and narrowing-only. `@sapl/nestjs/mongoose` provides the Mongoose (MongoDB) integration and `@sapl/nestjs/prisma` the Prisma (SQL) integration; `mongoose` and `@prisma/client` are optional peer dependencies, so you install only the one you use. The obligation is portable: the same `mongo:queryRewriting` policy works unchanged across the Spring, Python, and NestJS MongoDB integrations. See [Query Rewriting](https://sapl.io/docs/latest/6_11_QueryRewriting/) for the obligation format and setup.
+
 ## Getting Started
 
 Requires Node 22+ and NestJS 11+.
@@ -45,6 +47,7 @@ For setup instructions, configuration options, the constraint handler reference,
 
 - [Full Documentation](https://sapl.io/docs/latest/)
 - [NestJS Integration](https://sapl.io/docs/latest/6_4_NestJS/)
+- [Query Rewriting (Mongoose / Prisma shims)](https://sapl.io/docs/latest/6_11_QueryRewriting/)
 - [Demo Application](https://github.com/heutelbeck/sapl-nestjs-demo)
 - [Report an Issue](https://github.com/heutelbeck/sapl-nestjs/issues)
 
