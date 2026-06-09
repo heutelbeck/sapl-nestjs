@@ -26,14 +26,12 @@ const DEFAULT_IMAGE = 'ghcr.io/heutelbeck/sapl-node:4.1.0-SNAPSHOT';
 const PERMIT_ALL_POLICY = `policy "permit-all"
 permit`;
 
-const PDP_CONFIG_JSON = JSON.stringify(
-  {
-    algorithm: { votingMode: 'PRIORITY_PERMIT', defaultDecision: 'DENY', errorHandling: 'ABSTAIN' },
-    variables: {},
-  },
-  null,
-  2,
-);
+const DEFAULT_POLICIES: Readonly<Record<string, string>> = { 'permit-all.sapl': PERMIT_ALL_POLICY };
+
+const DEFAULT_PDP_CONFIG = {
+  algorithm: { votingMode: 'PRIORITY_PERMIT', defaultDecision: 'DENY', errorHandling: 'ABSTAIN' },
+  variables: {},
+};
 
 export interface SaplNodeContainerOptions {
   /**
@@ -64,6 +62,19 @@ export interface SaplNodeContainerOptions {
    * trust anchor to the client.
    */
   readonly tls?: boolean;
+  /**
+   * Override the policy bundle. Keys are policy file names (ending in
+   * `.sapl`), values are the SAPL source. Defaults to a single
+   * permit-all policy. Provide content-dependent policies here to test
+   * that subscription fields actually reach the node over the wire.
+   */
+  readonly policies?: Readonly<Record<string, string>>;
+  /**
+   * Override the `pdp.json` combining-algorithm configuration. Defaults
+   * to `PRIORITY_PERMIT` / `DENY` / `ABSTAIN`. Use `defaultDecision:
+   * 'ABSTAIN'` to get `NOT_APPLICABLE` when no policy matches.
+   */
+  readonly pdpConfig?: Record<string, unknown>;
 }
 
 export interface UserEntry {
@@ -98,9 +109,13 @@ export async function startSaplNode(options: SaplNodeContainerOptions = {}): Pro
   const tlsEnabled = options.tls === true;
   const dataDir = mkdtempSync(join(tmpdir(), 'sapl-it-data-'));
   chmodSync(dataDir, 0o755);
-  writeFileSync(join(dataDir, 'permit-all.sapl'), PERMIT_ALL_POLICY);
-  writeFileSync(join(dataDir, 'pdp.json'), PDP_CONFIG_JSON);
-  chmodSync(join(dataDir, 'permit-all.sapl'), 0o644);
+  const policies = options.policies ?? DEFAULT_POLICIES;
+  for (const [fileName, source] of Object.entries(policies)) {
+    writeFileSync(join(dataDir, fileName), source);
+    chmodSync(join(dataDir, fileName), 0o644);
+  }
+  const pdpConfigJson = JSON.stringify(options.pdpConfig ?? DEFAULT_PDP_CONFIG, null, 2);
+  writeFileSync(join(dataDir, 'pdp.json'), pdpConfigJson);
   chmodSync(join(dataDir, 'pdp.json'), 0o644);
   if (tlsEnabled) {
     copyFileSync(join(TLS_FIXTURE_DIR, 'server.pem'), join(dataDir, 'server.pem'));

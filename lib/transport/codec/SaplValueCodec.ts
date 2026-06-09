@@ -23,29 +23,29 @@
 export class SaplValueCodec {
   encode(value: unknown): Record<string, unknown> {
     if (value === undefined) {
-      return { undefined_value: true };
+      return { undefinedValue: true };
     }
     if (value === null) {
-      return { null_value: {} };
+      return { nullValue: {} };
     }
     if (typeof value === 'boolean') {
-      return { bool_value: value };
+      return { boolValue: value };
     }
     if (typeof value === 'number' || typeof value === 'bigint') {
-      return { number_value: String(value) };
+      return { numberValue: String(value) };
     }
     if (typeof value === 'string') {
-      return { text_value: value };
+      return { textValue: value };
     }
     if (Array.isArray(value)) {
-      return { array_value: { elements: value.map((element) => this.encode(element)) } };
+      return { arrayValue: { elements: value.map((element) => this.encode(element)) } };
     }
     if (typeof value === 'object') {
       const fields: Record<string, unknown> = {};
       for (const [key, child] of Object.entries(value)) {
         fields[key] = this.encode(child);
       }
-      return { object_value: { fields } };
+      return { objectValue: { fields } };
     }
     throw new Error(`SaplValueCodec cannot encode value of type ${typeof value}`);
   }
@@ -55,35 +55,35 @@ export class SaplValueCodec {
       return undefined;
     }
     const oneOf = value as Record<string, unknown>;
-    if ('undefined_value' in oneOf && oneOf.undefined_value === true) {
+    if ('undefinedValue' in oneOf && oneOf.undefinedValue === true) {
       return undefined;
     }
-    if ('null_value' in oneOf) {
+    if ('nullValue' in oneOf) {
       return null;
     }
-    if ('bool_value' in oneOf) {
-      return oneOf.bool_value;
+    if ('boolValue' in oneOf) {
+      return oneOf.boolValue;
     }
-    if ('number_value' in oneOf && typeof oneOf.number_value === 'string') {
-      return Number(oneOf.number_value);
+    if ('numberValue' in oneOf && typeof oneOf.numberValue === 'string') {
+      return Number(oneOf.numberValue);
     }
-    if ('text_value' in oneOf) {
-      return oneOf.text_value;
+    if ('textValue' in oneOf) {
+      return oneOf.textValue;
     }
-    if ('array_value' in oneOf && oneOf.array_value) {
-      const arrayValue = oneOf.array_value as { elements?: unknown[] };
+    if ('arrayValue' in oneOf && oneOf.arrayValue) {
+      const arrayValue = oneOf.arrayValue as { elements?: unknown[] };
       return (arrayValue.elements ?? []).map((element) => this.decode(element));
     }
-    if ('object_value' in oneOf && oneOf.object_value) {
-      const objectValue = oneOf.object_value as { fields?: Record<string, unknown> };
+    if ('objectValue' in oneOf && oneOf.objectValue) {
+      const objectValue = oneOf.objectValue as { fields?: Record<string, unknown> };
       const decoded: Record<string, unknown> = {};
       for (const [key, child] of Object.entries(objectValue.fields ?? {})) {
         decoded[key] = this.decode(child);
       }
       return decoded;
     }
-    if ('error_value' in oneOf && oneOf.error_value) {
-      const errorValue = oneOf.error_value as { message?: string };
+    if ('errorValue' in oneOf && oneOf.errorValue) {
+      const errorValue = oneOf.errorValue as { message?: string };
       return new Error(errorValue.message ?? 'SAPL error value');
     }
     return undefined;
