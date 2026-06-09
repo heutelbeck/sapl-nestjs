@@ -6,6 +6,8 @@ import { GenericContainer, StartedNetwork, StartedTestContainer, Wait } from 'te
 import { chmodSync, copyFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 
 const HTTP_PORT = 8080;
 const HTTPS_PORT = 8443;
@@ -17,6 +19,48 @@ const TLS_BUNDLE_NAME = 'saplbundle';
 const TLS_FIXTURE_DIR = resolve(__dirname, 'fixtures', 'tls');
 
 const DEFAULT_IMAGE = 'ghcr.io/heutelbeck/sapl-node:4.1.0-SNAPSHOT';
+const READY_PROBE_TIMEOUT_MS = 30_000;
+const READY_PROBE_BODY = '{"subject":"_","action":"_","resource":"_"}';
+
+/**
+ * Waits until the node answers an HTTP decision request, mirroring the readiness
+ * probe the other PEP integration suites use. The "SAPL Node ready" log marks
+ * process startup, not decision-readiness; without this a cold PDP can make the
+ * first multi-decision snapshot time out.
+ */
+async function waitUntilDecisionReady(httpUrl: string, timeoutMs: number): Promise<void> {
+  const url = new URL(`${httpUrl}/api/pdp/decide-once`);
+  const requestFn = (url.protocol === 'https:' ? httpsRequest : httpRequest) as typeof httpsRequest;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const responded = await new Promise<boolean>((resolveProbe) => {
+      const req = requestFn(
+        url,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          rejectUnauthorized: false,
+          timeout: 2_000,
+        },
+        (res) => {
+          res.resume();
+          resolveProbe(true);
+        },
+      );
+      req.on('error', () => resolveProbe(false));
+      req.on('timeout', () => {
+        req.destroy();
+        resolveProbe(false);
+      });
+      req.end(READY_PROBE_BODY);
+    });
+    if (responded) {
+      return;
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+  }
+  throw new Error(`SAPL Node did not become decision-ready within ${timeoutMs}ms.`);
+}
 
 /**
  * Test policies copied into the container at `/pdp/data/policies/`. A
@@ -173,10 +217,13 @@ export async function startSaplNode(options: SaplNodeContainerOptions = {}): Pro
   const mappedRsocket = container.getMappedPort(RSOCKET_PORT);
   const host = container.getHost();
   const scheme = tlsEnabled ? 'https' : 'http';
+  const httpUrl = `${scheme}://${host}:${mappedHttp}`;
+
+  await waitUntilDecisionReady(httpUrl, READY_PROBE_TIMEOUT_MS);
 
   return {
     container,
-    httpUrl: `${scheme}://${host}:${mappedHttp}`,
+    httpUrl,
     rsocketHost: host,
     rsocketPort: mappedRsocket,
     caPemPath: tlsEnabled ? join(TLS_FIXTURE_DIR, 'ca.pem') : null,
