@@ -110,7 +110,7 @@ describe('HttpPdpClient (integration, requires docker + local sapl-node image)',
       node = await startSaplNode({
         allowNoAuth: false,
         allowApiKeyAuth: true,
-        users: [{ id: 'it-apikey-client', apiKey: encodedApiKey }],
+        users: [{ id: 'it-apikey-client', apiKeyId: '7A7ByyQd6U', apiKey: encodedApiKey }],
       });
       client = new HttpPdpClient({
         baseUrl: node.httpUrl,

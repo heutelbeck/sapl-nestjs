@@ -176,7 +176,7 @@ transform
       node = await startSaplNode({
         allowNoAuth: false,
         allowApiKeyAuth: true,
-        users: [{ id: 'it-apikey-client', apiKey: encodedApiKey }],
+        users: [{ id: 'it-apikey-client', apiKeyId: '7A7ByyQd6U', apiKey: encodedApiKey }],
       });
       client = new RsocketPdpClient({
         host: node.rsocketHost,
