@@ -21,6 +21,21 @@ type FetchFn = (input: string, init: RequestInitWithDispatcher) => Promise<Respo
 const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_RETRY_BASE_DELAY_MS = 1000;
 const DEFAULT_RETRY_MAX_DELAY_MS = 30000;
+const RETRY_ESCALATION_THRESHOLD = 5;
+
+interface ReconnectLogger {
+  warn(message: string): void;
+  error(message: string): void;
+}
+
+export function logReconnectAttempt(logger: ReconnectLogger, retryCount: number, message: string): void {
+  if (retryCount >= RETRY_ESCALATION_THRESHOLD) {
+    logger.error(message);
+  } else {
+    logger.warn(message);
+  }
+}
+
 const MAX_LOG_BODY_LENGTH = 500;
 const truncateForLog = (body: string): string =>
   body.length > MAX_LOG_BODY_LENGTH ? body.substring(0, MAX_LOG_BODY_LENGTH) + '...' : body;
@@ -524,9 +539,8 @@ export class HttpPdpClient implements PdpClient {
         delay: (_error, retryCount) => {
           const baseDelay = Math.min(this.retryBaseDelay * Math.pow(2, retryCount - 1), this.retryMaxDelay);
           const delay = Math.round(baseDelay * (0.5 + Math.random() * 0.5));
-          this.logger.warn(
-            `PDP streaming connection lost, reconnecting in ${delay}ms (attempt ${retryCount})`,
-          );
+          const message = `PDP streaming connection lost, reconnecting in ${delay}ms (attempt ${retryCount})`;
+          logReconnectAttempt(this.logger, retryCount, message);
           return timer(delay);
         },
       }),
