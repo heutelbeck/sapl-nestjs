@@ -86,11 +86,15 @@ describe('HttpPdpClient streaming resilience contract', () => {
         .subscribe({ next: (decision) => emissions.push(decision) });
 
       // Headers arrive, then the server holds the socket open and sends nothing.
-      // Advance well past the first-decision timeout and the inactivity timeout.
+      // Drive the exact boundaries: the first-decision liveness timeout (default
+      // 5000ms) fails the silent stream closed, then the backoff (base = max =
+      // 5ms) reconnects. Advancing to the boundaries keeps the number of fired
+      // timers bounded so a slow runner does not exhaust the real test timeout.
       await jest.advanceTimersByTimeAsync(0);
-      await jest.advanceTimersByTimeAsync(120_000);
-
+      await jest.advanceTimersByTimeAsync(5000);
       expect(emissions).toContainEqual({ decision: 'INDETERMINATE' });
+
+      await jest.advanceTimersByTimeAsync(5);
       expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
 
       sub.unsubscribe();
@@ -106,12 +110,16 @@ describe('HttpPdpClient streaming resilience contract', () => {
         .subscribe({ next: (decision) => emissions.push(decision) });
 
       // One PERMIT arrives, then the connection stalls (no further frames, no FIN).
+      // The inactivity liveness timeout (default 60000ms) trips, then the backoff
+      // (base = max = 5ms) reconnects. Advance to the exact boundaries.
       await jest.advanceTimersByTimeAsync(0);
-      await jest.advanceTimersByTimeAsync(120_000);
-
       expect(emissions).toContainEqual({ decision: 'PERMIT' });
+
+      await jest.advanceTimersByTimeAsync(60_000);
       // Inactivity must not leave the consumer pinned to the stale PERMIT.
       expect(emissions).toContainEqual({ decision: 'INDETERMINATE' });
+
+      await jest.advanceTimersByTimeAsync(5);
       expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
 
       sub.unsubscribe();
@@ -137,6 +145,9 @@ describe('HttpPdpClient streaming resilience contract', () => {
 
       const warnSpy = jest.spyOn(Logger.prototype, 'warn');
       const errorSpy = jest.spyOn(Logger.prototype, 'error');
+      // Pin the backoff jitter so every reconnect waits exactly the base delay
+      // (base = max = 5ms) and each advance fires precisely one reconnect.
+      jest.spyOn(Math, 'random').mockReturnValue(0.999);
 
       const sub = newClient()
         .decide(SUBSCRIPTION)
@@ -144,7 +155,7 @@ describe('HttpPdpClient streaming resilience contract', () => {
 
       await jest.advanceTimersByTimeAsync(0);
       for (let cycle = 0; cycle < 8; cycle++) {
-        await jest.advanceTimersByTimeAsync(10);
+        await jest.advanceTimersByTimeAsync(5);
       }
       sub.unsubscribe();
 
