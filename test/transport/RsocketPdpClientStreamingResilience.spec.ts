@@ -32,15 +32,11 @@ class FakeRSocket {
 }
 
 const fakeSocket = new FakeRSocket();
-let connectCalls = 0;
 
 jest.mock('@rsocket/core', () => ({
   ...jest.requireActual('@rsocket/core'),
   RSocketConnector: jest.fn().mockImplementation(() => ({
-    connect: () => {
-      connectCalls++;
-      return Promise.resolve(fakeSocket);
-    },
+    connect: () => Promise.resolve(fakeSocket),
   })),
 }));
 
@@ -63,8 +59,7 @@ import type { AuthorizationDecision } from '../../lib/types';
 
 const SUBSCRIPTION = { subject: 'alice', action: 'read', resource: 'doc-1' };
 const INDETERMINATE: AuthorizationDecision = { decision: 'INDETERMINATE' };
-const frame = (decision: AuthorizationDecision): Buffer =>
-  Buffer.from(JSON.stringify(decision), 'utf8');
+const frame = (decision: AuthorizationDecision): Buffer => Buffer.from(JSON.stringify(decision), 'utf8');
 
 interface StreamObservation {
   readonly emissions: AuthorizationDecision[];
@@ -81,7 +76,6 @@ describe('RsocketPdpClient streaming resilience: first-decision timeout, decode 
     jest.useFakeTimers();
     fakeSocket.handlers.length = 0;
     fakeSocket.requestStreamCalls = 0;
-    connectCalls = 0;
     warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
   });
@@ -172,11 +166,7 @@ describe('RsocketPdpClient streaming resilience: first-decision timeout, decode 
       await jest.advanceTimersByTimeAsync(0);
 
       expect(fakeSocket.requestStreamCalls).toBe(1);
-      expect(state.emissions).toEqual([
-        { decision: 'PERMIT' },
-        INDETERMINATE,
-        { decision: 'DENY' },
-      ]);
+      expect(state.emissions).toEqual([{ decision: 'PERMIT' }, INDETERMINATE, { decision: 'DENY' }]);
       expect(state.terminalError).toBeNull();
       expect(state.completed).toBe(false);
 

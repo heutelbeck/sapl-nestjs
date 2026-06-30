@@ -35,7 +35,10 @@ function parseBracket(path: string, start: number): { selector: Selector; next: 
   if (/^-?\d+$/.test(content)) {
     return { selector: { kind: 'index', index: Number(content) }, next };
   }
-  if ((content.startsWith("'") && content.endsWith("'")) || (content.startsWith('"') && content.endsWith('"'))) {
+  if (
+    (content.startsWith("'") && content.endsWith("'")) ||
+    (content.startsWith('"') && content.endsWith('"'))
+  ) {
     const name = content.slice(1, -1);
     rejectDangerous(name, path);
     return { selector: { kind: 'child', name }, next };
@@ -72,9 +75,7 @@ function parsePath(path: string): Selector[] {
       if (path[i + 1] === '.') {
         i += 2;
         if (path[i] === '*' || path[i] === '[') {
-          throw new Error(
-            `Unsupported JSONPath: recursive descent must name a field in '${path}'.`,
-          );
+          throw new Error(`Unsupported JSONPath: recursive descent must name a field in '${path}'.`);
         }
         const { name, next } = readName(path, i);
         rejectDangerous(name, path);
@@ -120,7 +121,11 @@ function collectRecursive(node: any, name: string, out: NodeRef[]): void {
 function expandSelector(value: any, selector: Selector, out: NodeRef[]): void {
   switch (selector.kind) {
     case 'child':
-      if (isObject(value) && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, selector.name)) {
+      if (
+        isObject(value) &&
+        !Array.isArray(value) &&
+        Object.prototype.hasOwnProperty.call(value, selector.name)
+      ) {
         out.push({ container: value, key: selector.name });
       }
       break;
@@ -241,7 +246,13 @@ function applyActionToRef(ref: NodeRef, action: any, actionType: string): void {
       if (blackenLength !== undefined && blackenLength > MAX_BLACKEN) {
         throw new Error("'length' of 'blacken' action exceeds the maximum permitted blacken length.");
       }
-      ref.container[ref.key] = blacken(currentValue, replacementChar, discloseLeft, discloseRight, blackenLength);
+      ref.container[ref.key] = blacken(
+        currentValue,
+        replacementChar,
+        discloseLeft,
+        discloseRight,
+        blackenLength,
+      );
       break;
     }
     default:

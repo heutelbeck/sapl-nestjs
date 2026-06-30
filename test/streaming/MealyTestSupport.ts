@@ -167,7 +167,12 @@ export const itemOutcomes: ReadonlyArray<[string, Event]> = [
 
 export const nonTerminatedStateAndLifecycleTerminator: ReadonlyArray<[string, string, State, Event]> =
   nonTerminatedStates.flatMap(([sName, source]) =>
-    lifecycleTerminators.map(([eName, event]): [string, string, State, Event] => [sName, eName, source, event]),
+    lifecycleTerminators.map(([eName, event]): [string, string, State, Event] => [
+      sName,
+      eName,
+      source,
+      event,
+    ]),
   );
 
 const rapItemByOutcome = (outcome: string): Event => {

@@ -66,11 +66,14 @@ describe('MealyMachine invariants', () => {
    *   ∀ (s : State), s ≠ .Terminated →
    *     (step s .PdpPermit).newState = .Permitting
    */
-  test.each(nonTerminatedStates)('permit_universally_reaches_permitting [from %s]', (_name, source: State) => {
-    const result = step(source, pdpPermit());
+  test.each(nonTerminatedStates)(
+    'permit_universally_reaches_permitting [from %s]',
+    (_name, source: State) => {
+      const result = step(source, pdpPermit());
 
-    expect(result.newState.type).toBe('Permitting');
-  });
+      expect(result.newState.type).toBe('Permitting');
+    },
+  );
 
   /*
    * Lean theorem: suspend_universally_reaches_suspended
@@ -78,11 +81,14 @@ describe('MealyMachine invariants', () => {
    *   ∀ (s : State), s ≠ .Terminated →
    *     (step s .PdpSuspend).newState = .Suspended
    */
-  test.each(nonTerminatedStates)('suspend_universally_reaches_suspended [from %s]', (_name, source: State) => {
-    const result = step(source, pdpSuspend());
+  test.each(nonTerminatedStates)(
+    'suspend_universally_reaches_suspended [from %s]',
+    (_name, source: State) => {
+      const result = step(source, pdpSuspend());
 
-    expect(result.newState.type).toBe('Suspended');
-  });
+      expect(result.newState.type).toBe('Suspended');
+    },
+  );
 
   /*
    * Lean theorem: lifecycle_terminators_reach_terminated

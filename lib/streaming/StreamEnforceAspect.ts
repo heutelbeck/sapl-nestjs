@@ -7,7 +7,13 @@ import type { Signal, SignalKind } from '../constraints/Signal';
 import { PdpService } from '../pdp.service';
 import { buildContext, buildSubscriptionFromContext } from '../SubscriptionBuilder';
 import type { AuthorizationDecision } from '../types';
-import { AccessDeniedError, EnforcementPlan as MealyPlan, EnforcementResult, absentMaybe, presentMaybe } from './MealyMachine';
+import {
+  AccessDeniedError,
+  EnforcementPlan as MealyPlan,
+  EnforcementResult,
+  absentMaybe,
+  presentMaybe,
+} from './MealyMachine';
 import { STREAM_ENFORCE_SYMBOL, StreamEnforceOptions } from './StreamEnforce';
 import { createStreamingPipeline } from './StreamingPipeline';
 
@@ -89,11 +95,17 @@ export class StreamEnforceAspect implements LazyDecorator<any, StreamEnforceOpti
    */
   private enforceSignalOrThrow(plan: EnforcementPlan | null, signal: Signal): void {
     if (plan !== null && plan.execute(signal).failureState) {
-      throw new AccessDeniedError(`Access Denied. An obligation handler failed during ${signal.kind} enforcement.`);
+      throw new AccessDeniedError(
+        `Access Denied. An obligation handler failed during ${signal.kind} enforcement.`,
+      );
     }
   }
 
-  private adaptForFsm(plan: EnforcementPlan, decision: AuthorizationDecision, subscribeDenied: boolean): MealyPlan {
+  private adaptForFsm(
+    plan: EnforcementPlan,
+    decision: AuthorizationDecision,
+    subscribeDenied: boolean,
+  ): MealyPlan {
     return {
       enforceDecisionConstraints(): boolean {
         const result = plan.execute({ kind: 'decision', value: decision });

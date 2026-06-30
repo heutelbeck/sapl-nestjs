@@ -97,7 +97,10 @@ export class EnforcementPlanner {
   // A throwing provider is treated as no-claim, so a malformed constraint
   // fails closed via the synthetic substitute instead of escaping plan() as a
   // raw exception.
-  private claimHandlers(provider: ConstraintHandlerProvider, constraint: unknown): ReadonlyArray<ScopedHandler> {
+  private claimHandlers(
+    provider: ConstraintHandlerProvider,
+    constraint: unknown,
+  ): ReadonlyArray<ScopedHandler> {
     try {
       return provider.getHandlers(constraint);
     } catch (error) {
