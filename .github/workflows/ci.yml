@@ -14,10 +14,10 @@ jobs:
         node-version: [22.x, 24.x]
 
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
@@ -34,43 +34,18 @@ jobs:
     runs-on: ubuntu-latest
     # Integration tests use testcontainers: Mongo (and Postgres for the
     # Prisma shim) come up per-test, while the PDP transport tests need a
-    # sapl-node image. The image is built from the sapl-policy-engine
-    # source so the IT suite always runs against the matching engine
-    # snapshot rather than a separately published tag.
-    # The image is tagged with the fully-qualified name the IT suite resolves
-    # by default, so testcontainers finds the locally-built image and does not
-    # attempt a registry pull (a bare name would normalize to docker.io and 404).
+    # sapl-node image. The image is the published release pulled from ghcr.io;
+    # the IT suite resolves the tag via SAPL_NODE_IMAGE.
     env:
-      SAPL_NODE_IMAGE: ghcr.io/heutelbeck/sapl-node:4.1.0-SNAPSHOT
+      SAPL_NODE_IMAGE: ghcr.io/heutelbeck/sapl-node:4.1.2
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Check out sapl-policy-engine (4.1.0)
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          repository: heutelbeck/sapl-policy-engine
-          ref: '4.1.0'
-          path: sapl-policy-engine
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
-        with:
-          distribution: temurin
-          java-version: '21'
-          cache: maven
-
-      # Build the engine and package the sapl-node image with Spring Boot
-      # buildpacks, overriding the image name to the local tag the IT suite
-      # resolves via SAPL_NODE_IMAGE. -am builds the module's reactor
-      # dependencies in the same invocation.
-      - name: Build sapl-node image
-        working-directory: sapl-policy-engine
-        run: |
-          mvn -B -ntp -DskipTests -pl sapl-node -am install
-          mvn -B -ntp -pl sapl-node spring-boot:build-image -Dspring-boot.build-image.imageName="$SAPL_NODE_IMAGE"
+      - name: Pull SAPL Node image
+        run: docker pull "$SAPL_NODE_IMAGE"
 
       - name: Use Node.js 24.x
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 24.x
           cache: npm

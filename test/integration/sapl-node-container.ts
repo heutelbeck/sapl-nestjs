@@ -18,7 +18,7 @@ const STARTUP_TIMEOUT_MS = 120_000;
 const TLS_BUNDLE_NAME = 'saplbundle';
 const TLS_FIXTURE_DIR = resolve(__dirname, 'fixtures', 'tls');
 
-const DEFAULT_IMAGE = 'ghcr.io/heutelbeck/sapl-node:4.1.0-SNAPSHOT';
+const DEFAULT_IMAGE = 'ghcr.io/heutelbeck/sapl-node:4.1.2';
 const READY_PROBE_TIMEOUT_MS = 30_000;
 const READY_PROBE_BODY = '{"subject":"_","action":"_","resource":"_"}';
 
@@ -80,8 +80,8 @@ const DEFAULT_PDP_CONFIG = {
 export interface SaplNodeContainerOptions {
   /**
    * Override the image tag. Defaults to the env var SAPL_NODE_IMAGE or
-   * `ghcr.io/heutelbeck/sapl-node:4.1.0-SNAPSHOT`. Use the env var when
-   * targeting a pre-release published image.
+   * `ghcr.io/heutelbeck/sapl-node:4.1.2`. Use the env var when
+   * targeting a different published image.
    */
   readonly image?: string;
   /** Allow unauthenticated requests. Defaults to true for transport ITs. */

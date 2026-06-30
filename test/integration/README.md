@@ -8,18 +8,14 @@ and many seconds per spec.
 ## Prerequisites
 
 1. Docker daemon running.
-2. A SAPL Node image accessible to the local docker engine:
+2. The SAPL Node image accessible to the local docker engine:
 
    ```
-   cd /path/to/sapl-policy-engine
-   mvn -pl sapl-node -am install -DskipTests
-   mvn -pl sapl-node spring-boot:build-image -DskipTests
+   docker pull ghcr.io/heutelbeck/sapl-node:4.1.2
    ```
 
-   After the build, `docker images` lists
-   `ghcr.io/heutelbeck/sapl-node:4.1.0-SNAPSHOT`. The IT picks that tag
-   up by default. Override with `SAPL_NODE_IMAGE=...` once the official
-   4.1.0 release is published to GHCR.
+   The IT picks `ghcr.io/heutelbeck/sapl-node:4.1.2` up by default.
+   Override with `SAPL_NODE_IMAGE=...` to test against another tag.
 
 ## Running
 
@@ -27,7 +23,7 @@ and many seconds per spec.
 npm run test:it
 ```
 
-Skip the SAPL Node build steps and the IT will fail at container start.
+If the image cannot be pulled, the IT fails at container start.
 The error message names the missing image tag.
 
 ## What the IT covers
