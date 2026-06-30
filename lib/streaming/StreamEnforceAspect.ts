@@ -3,11 +3,11 @@ import { ClsService } from 'nestjs-cls';
 import { Observable, finalize, tap } from 'rxjs';
 import { EnforcementPlanner } from '../constraints/Planner';
 import { EnforcementPlan } from '../constraints/Plan';
-import type { SignalKind } from '../constraints/Signal';
+import type { Signal, SignalKind } from '../constraints/Signal';
 import { PdpService } from '../pdp.service';
 import { buildContext, buildSubscriptionFromContext } from '../SubscriptionBuilder';
 import type { AuthorizationDecision } from '../types';
-import { EnforcementPlan as MealyPlan, EnforcementResult, absentMaybe, presentMaybe } from './MealyMachine';
+import { AccessDeniedError, EnforcementPlan as MealyPlan, EnforcementResult, absentMaybe, presentMaybe } from './MealyMachine';
 import { STREAM_ENFORCE_SYMBOL, StreamEnforceOptions } from './StreamEnforce';
 import { createStreamingPipeline } from './StreamingPipeline';
 
@@ -47,11 +47,14 @@ export class StreamEnforceAspect implements LazyDecorator<any, StreamEnforceOpti
 
       const planner = (decision: AuthorizationDecision): MealyPlan => {
         currentPlan = this.planner.plan(decision, STREAM_SIGNALS);
+        let subscribeDenied = false;
         if (!firstPlanApplied) {
           firstPlanApplied = true;
-          currentPlan.execute({ kind: 'subscribe' });
+          // The subscribe signal gates before any data flows: an obligation
+          // failure here denies the stream rather than being swallowed.
+          subscribeDenied = currentPlan.execute({ kind: 'subscribe' }).failureState;
         }
-        return this.adaptForFsm(currentPlan, decision);
+        return this.adaptForFsm(currentPlan, decision, subscribeDenied);
       };
 
       const rapSupplier = (): Observable<unknown> =>
@@ -69,21 +72,32 @@ export class StreamEnforceAspect implements LazyDecorator<any, StreamEnforceOpti
         tap({
           error: (error: unknown) => {
             const asError = error instanceof Error ? error : new Error(String(error));
-            currentPlan?.execute({ kind: 'error', value: asError });
+            this.enforceSignalOrThrow(currentPlan, { kind: 'error', value: asError });
           },
-          complete: () => currentPlan?.execute({ kind: 'complete' }),
-          unsubscribe: () => currentPlan?.execute({ kind: 'cancel' }),
+          complete: () => this.enforceSignalOrThrow(currentPlan, { kind: 'complete' }),
+          unsubscribe: () => this.enforceSignalOrThrow(currentPlan, { kind: 'cancel' }),
         }),
-        finalize(() => currentPlan?.execute({ kind: 'termination' })),
+        finalize(() => this.enforceSignalOrThrow(currentPlan, { kind: 'termination' })),
       );
     };
   }
 
-  private adaptForFsm(plan: EnforcementPlan, decision: AuthorizationDecision): MealyPlan {
+  /**
+   * Discharges a void/self-contained lifecycle signal and raises an
+   * at-signal AccessDeniedError when an obligation handler failed,
+   * mirroring Spring EnforcementPlan.enforceConstraintsOrThrow.
+   */
+  private enforceSignalOrThrow(plan: EnforcementPlan | null, signal: Signal): void {
+    if (plan !== null && plan.execute(signal).failureState) {
+      throw new AccessDeniedError(`Access Denied. An obligation handler failed during ${signal.kind} enforcement.`);
+    }
+  }
+
+  private adaptForFsm(plan: EnforcementPlan, decision: AuthorizationDecision, subscribeDenied: boolean): MealyPlan {
     return {
       enforceDecisionConstraints(): boolean {
         const result = plan.execute({ kind: 'decision', value: decision });
-        return result.failureState;
+        return result.failureState || subscribeDenied;
       },
       executePerItem(payload: unknown): EnforcementResult<unknown> {
         const result = plan.execute({ kind: 'output', value: payload });

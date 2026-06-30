@@ -20,7 +20,7 @@ import type { AuthorizationDecision } from '../types';
 export type Signal =
   | { readonly kind: 'decision'; readonly value: AuthorizationDecision }
   | { readonly kind: 'input'; readonly value: readonly unknown[] }
-  | { readonly kind: 'output'; readonly value: unknown }
+  | { readonly kind: 'output'; readonly value?: unknown }
   | { readonly kind: 'error'; readonly value: Error }
   | { readonly kind: 'subscribe' }
   | { readonly kind: 'cancel' }

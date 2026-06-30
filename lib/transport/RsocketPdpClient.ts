@@ -30,6 +30,9 @@ const DEFAULT_KEEPALIVE_LIFETIME_MS = 60_000;
 const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_RETRY_BASE_DELAY_MS = 1000;
 const DEFAULT_RETRY_MAX_DELAY_MS = 30_000;
+// Consecutive reconnect attempts at or beyond this count are logged at ERROR so a
+// sustained outage is alertable, while the client keeps retrying forever.
+const RETRY_ESCALATION_THRESHOLD = 5;
 
 const ERROR_RSOCKET_HOST_REQUIRED = 'RsocketPdpClient requires a non-empty host.';
 const ERROR_RSOCKET_PORT_REQUIRED = 'RsocketPdpClient requires a positive port number.';
@@ -243,10 +246,28 @@ export class RsocketPdpClient implements PdpClient {
     const singleAttempt$ = new Observable<TOut>((subscriber) => {
       let cancellable: { cancel: () => void } | null = null;
       let cancelled = false;
+      let firstDecisionSeen = false;
+      let firstDecisionTimer: NodeJS.Timeout | undefined;
+      const clearFirstDecisionTimer = (): void => {
+        if (firstDecisionTimer !== undefined) {
+          clearTimeout(firstDecisionTimer);
+          firstDecisionTimer = undefined;
+        }
+      };
       const fail = (cause: unknown): void => {
+        clearFirstDecisionTimer();
         for (const value of fallback()) subscriber.next(value);
         subscriber.error(new Error(`RSocket ${label} stream interrupted`, { cause }));
       };
+      // First-decision timeout (CR-11): a server whose RSocket layer is healthy
+      // (keepalive acked) but that never produces the first decision frame must
+      // fail closed and reconnect rather than hang the consumer forever. Only the
+      // first decision is bounded; later decisions stream without a per-item bound.
+      firstDecisionTimer = setTimeout(() => {
+        if (!firstDecisionSeen) {
+          fail(new Error(`RSocket ${label} no decision within ${this.timeoutMs}ms`));
+        }
+      }, this.timeoutMs);
       this.connect()
         .then(async (socket) => {
           if (cancelled) return;
@@ -254,12 +275,16 @@ export class RsocketPdpClient implements PdpClient {
           cancellable = socket.requestStream({ data, metadata }, 0x7fffffff, {
             onNext: (payload, isComplete) => {
               if (payload.data) {
+                firstDecisionSeen = true;
+                clearFirstDecisionTimer();
                 try {
                   subscriber.next(decoder(payload.data));
                 } catch (error) {
+                  // Decode-failure substitution (CR-14): emit INDETERMINATE for the
+                  // single undecodable frame and keep the same stream alive instead
+                  // of tearing it down and reconnecting.
                   this.logger.error(`RSocket ${label} decode failure: ${String(error)}`);
-                  fail(error);
-                  return;
+                  for (const value of fallback()) subscriber.next(value);
                 }
               }
               if (isComplete) fail(new Error(`RSocket ${label} stream ended`));
@@ -272,6 +297,7 @@ export class RsocketPdpClient implements PdpClient {
         .catch((error: unknown) => fail(error));
       return () => {
         cancelled = true;
+        clearFirstDecisionTimer();
         cancellable?.cancel();
       };
     });
@@ -281,9 +307,13 @@ export class RsocketPdpClient implements PdpClient {
         delay: (_error, retryCount) => {
           const baseDelay = Math.min(this.retryBaseDelay * Math.pow(2, retryCount - 1), this.retryMaxDelay);
           const delay = Math.round(baseDelay * (0.5 + Math.random() * 0.5));
-          this.logger.warn(
-            `RSocket ${label} connection lost, reconnecting in ${delay}ms (attempt ${retryCount}).`,
-          );
+          const message = `RSocket ${label} connection lost, reconnecting in ${delay}ms (attempt ${retryCount}).`;
+          // Escalate WARN -> ERROR once a sustained outage crosses the threshold (CR-10).
+          if (retryCount >= RETRY_ESCALATION_THRESHOLD) {
+            this.logger.error(message);
+          } else {
+            this.logger.warn(message);
+          }
           return timer(delay);
         },
       }),

@@ -1,5 +1,16 @@
 import { Logger } from '@nestjs/common';
-import { Observable, Subscriber, distinctUntilChanged, retry, timer } from 'rxjs';
+import {
+  EMPTY,
+  Observable,
+  catchError,
+  concat,
+  distinctUntilChanged,
+  from,
+  retry,
+  tap,
+  throwError,
+  timer,
+} from 'rxjs';
 import { isDeepStrictEqual } from 'node:util';
 import { Agent, fetch as undiciFetch, type Dispatcher } from 'undici';
 import {
@@ -19,6 +30,7 @@ type RequestInitWithDispatcher = RequestInit & { dispatcher?: Dispatcher };
 type FetchFn = (input: string, init: RequestInitWithDispatcher) => Promise<Response>;
 
 const DEFAULT_TIMEOUT_MS = 5000;
+const DEFAULT_INACTIVITY_TIMEOUT_MS = 60000;
 const DEFAULT_RETRY_BASE_DELAY_MS = 1000;
 const DEFAULT_RETRY_MAX_DELAY_MS = 30000;
 const RETRY_ESCALATION_THRESHOLD = 5;
@@ -55,6 +67,7 @@ const ERROR_MIXED_AUTH =
   'PDP authentication conflict: both token and username/secret are configured. Use either Bearer token (token) or Basic Auth (username + secret), not both.';
 const ERROR_PARTIAL_BASIC_AUTH = 'PDP Basic Auth requires both username and secret to be configured.';
 const ERROR_STREAM_ENDED = 'PDP decision stream ended unexpectedly';
+const ERROR_STREAM_INACTIVITY = 'PDP decision stream went silent past the inactivity timeout';
 const ERROR_STREAM_NO_BODY = 'PDP streaming response has no body';
 
 const WARN_LOOPBACK_PLAINTEXT_HTTP =
@@ -155,6 +168,100 @@ function validateMultiDecision(raw: unknown, logger: Logger): MultiAuthorization
   return { decisions };
 }
 
+function skipJsonWhitespace(text: string, index: number): number {
+  let i = index;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch !== ' ' && ch !== '\n' && ch !== '\t' && ch !== '\r') break;
+    i++;
+  }
+  return i;
+}
+
+// Index just past a complete JSON string that starts at the opening quote.
+function skipJsonString(text: string, index: number): number {
+  let i = index + 1;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '\\') {
+      i += 2;
+      continue;
+    }
+    if (ch === '"') return i + 1;
+    i++;
+  }
+  return i;
+}
+
+// Index just past a complete JSON value that starts at `index`.
+function skipJsonValue(text: string, index: number): number {
+  let i = skipJsonWhitespace(text, index);
+  const ch = text[i];
+  if (ch === '"') return skipJsonString(text, i);
+  if (ch === '{' || ch === '[') {
+    const open = ch;
+    const close = ch === '{' ? '}' : ']';
+    let depth = 0;
+    while (i < text.length) {
+      const c = text[i];
+      if (c === '"') {
+        i = skipJsonString(text, i);
+        continue;
+      }
+      if (c === open) depth++;
+      else if (c === close) {
+        depth--;
+        if (depth === 0) return i + 1;
+      }
+      i++;
+    }
+    return i;
+  }
+  while (
+    i < text.length &&
+    text[i] !== ',' &&
+    text[i] !== '}' &&
+    text[i] !== ']' &&
+    !' \n\t\r'.includes(text[i])
+  ) {
+    i++;
+  }
+  return i;
+}
+
+/**
+ * Detects a repeated key at the top level of a JSON object. `JSON.parse`
+ * silently collapses duplicate keys to last-wins, so a multi-decision payload
+ * that repeats a subscription id must be caught on the raw text before parsing
+ * to fail closed instead of merging. Returns the first duplicated key, or null
+ * when the text is a well-formed object without duplicates or is not a plain
+ * object (in which case normal parsing handles it).
+ */
+function firstDuplicateTopLevelKey(text: string): string | null {
+  let i = skipJsonWhitespace(text, 0);
+  if (text[i] !== '{') return null;
+  i++;
+  const seen = new Set<string>();
+  while (i < text.length) {
+    i = skipJsonWhitespace(text, i);
+    const ch = text[i];
+    if (ch === '}' || ch === undefined) return null;
+    if (ch === ',') {
+      i++;
+      continue;
+    }
+    if (ch !== '"') return null;
+    const keyEnd = skipJsonString(text, i);
+    const key = text.slice(i + 1, keyEnd - 1);
+    if (seen.has(key)) return key;
+    seen.add(key);
+    i = skipJsonWhitespace(text, keyEnd);
+    if (text[i] !== ':') return null;
+    i = skipJsonValue(text, i + 1);
+  }
+  return null;
+}
+
 /**
  * Optional dynamic-bearer token provider. When configured, the
  * Authorization header is built per request from `getAccessToken()`.
@@ -177,6 +284,11 @@ export interface HttpPdpClientOptions {
    */
   readonly tokenProvider?: BearerTokenProvider;
   readonly timeout?: number;
+  /**
+   * Maximum silence tolerated on an established stream between items before the
+   * connection is treated as dead, closed, and reconnected. Defaults to 60s.
+   */
+  readonly inactivityTimeout?: number;
   readonly streamingRetryBaseDelay?: number;
   readonly streamingRetryMaxDelay?: number;
   /**
@@ -189,6 +301,7 @@ export interface HttpPdpClientOptions {
 export class HttpPdpClient implements PdpClient {
   private readonly logger = new Logger(HttpPdpClient.name);
   private readonly timeoutMs: number;
+  private readonly inactivityTimeoutMs: number;
   private readonly retryBaseDelay: number;
   private readonly retryMaxDelay: number;
   private readonly resolveAuthorization: () => Promise<string | null>;
@@ -244,6 +357,7 @@ export class HttpPdpClient implements PdpClient {
       options.baseUrl,
     ).toString();
     this.timeoutMs = options.timeout ?? DEFAULT_TIMEOUT_MS;
+    this.inactivityTimeoutMs = options.inactivityTimeout ?? DEFAULT_INACTIVITY_TIMEOUT_MS;
     this.retryBaseDelay = options.streamingRetryBaseDelay ?? DEFAULT_RETRY_BASE_DELAY_MS;
     this.retryMaxDelay = options.streamingRetryMaxDelay ?? DEFAULT_RETRY_MAX_DELAY_MS;
     this.logger.log(`HttpPdpClient configured at ${options.baseUrl}`);
@@ -268,7 +382,7 @@ export class HttpPdpClient implements PdpClient {
       this.decideUrl,
       JSON.stringify(subscription),
       (parsed) => validateDecision(parsed, this.logger),
-      (subscriber) => subscriber.next(indeterminate),
+      () => [indeterminate],
     );
   }
 
@@ -278,7 +392,11 @@ export class HttpPdpClient implements PdpClient {
     this.logger.debug(
       `Requesting multi-decide-all-once: ${JSON.stringify(summariseMultiSubscription(subscription))}`,
     );
-    const raw = await this.fetchOnce(this.multiDecideAllOnceUrl, JSON.stringify(subscription.subscriptions));
+    const raw = await this.fetchOnce(
+      this.multiDecideAllOnceUrl,
+      JSON.stringify(subscription.subscriptions),
+      true,
+    );
     if (raw === null) return { decisions: {} };
     const summary = Object.fromEntries(
       Object.entries(raw as Record<string, unknown>).map(([id, dec]) => [
@@ -295,10 +413,12 @@ export class HttpPdpClient implements PdpClient {
       this.multiDecideUrl,
       subscription,
       (parsed) => validateIdentifiableDecision(parsed, this.logger),
-      (subscriber) => {
-        for (const subscriptionId of Object.keys(subscription.subscriptions)) {
-          subscriber.next({ subscriptionId, decision: { decision: 'INDETERMINATE' } });
-        }
+      () => {
+        const indeterminate: AuthorizationDecision = { decision: 'INDETERMINATE' };
+        return Object.keys(subscription.subscriptions).map((subscriptionId) => ({
+          subscriptionId,
+          decision: indeterminate,
+        }));
       },
     );
   }
@@ -308,12 +428,12 @@ export class HttpPdpClient implements PdpClient {
       this.multiDecideAllUrl,
       subscription,
       (parsed) => validateMultiDecision(parsed, this.logger),
-      (subscriber) => {
+      () => {
         const decisions: Record<string, AuthorizationDecision> = {};
         for (const id of Object.keys(subscription.subscriptions)) {
           decisions[id] = { decision: 'INDETERMINATE' };
         }
-        subscriber.next({ decisions });
+        return [{ decisions }];
       },
     );
   }
@@ -322,7 +442,7 @@ export class HttpPdpClient implements PdpClient {
     url: string,
     subscription: MultiAuthorizationSubscription,
     validate: (parsed: unknown) => T | null,
-    seed: (subscriber: Subscriber<T>) => void,
+    seed: () => T[],
   ): Observable<T> {
     this.logger.debug(
       `Streaming multi from ${url}: ${JSON.stringify(summariseMultiSubscription(subscription))}`,
@@ -347,7 +467,12 @@ export class HttpPdpClient implements PdpClient {
     return true;
   }
 
-  private async fetchOnce(url: string, body: string, retried = false): Promise<unknown | null> {
+  private async fetchOnce(
+    url: string,
+    body: string,
+    rejectDuplicateKeys = false,
+    retried = false,
+  ): Promise<unknown | null> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
@@ -377,10 +502,23 @@ export class HttpPdpClient implements PdpClient {
         if (response.status === 401 || response.status === 403) {
           this.logger.error('PDP authentication failed. Check token or username/secret configuration.');
           if (this.handleAuthFailure() && !retried) {
-            return this.fetchOnce(url, body, true);
+            return this.fetchOnce(url, body, rejectDuplicateKeys, true);
           }
         }
         return null;
+      }
+      if (rejectDuplicateKeys) {
+        // JSON.parse collapses duplicate keys to last-wins, so the raw text must
+        // be scanned before parsing to reject a repeated subscription id.
+        const text = await response.text();
+        const duplicate = firstDuplicateTopLevelKey(text);
+        if (duplicate !== null) {
+          this.logger.warn(
+            `PDP multi-decide-all response repeats subscription id ${JSON.stringify(duplicate)}; rejecting payload`,
+          );
+          return null;
+        }
+        return JSON.parse(text);
       }
       return await response.json();
     } catch (error) {
@@ -404,12 +542,8 @@ export class HttpPdpClient implements PdpClient {
     url: string,
     body: string,
     validate: (parsed: unknown) => T | null,
-    onStreamError?: (subscriber: Subscriber<T>) => void,
+    seedOnError?: () => T[],
   ): Observable<T> {
-    const emitError = (subscriber: Subscriber<T>, error: Error) => {
-      if (onStreamError) onStreamError(subscriber);
-      subscriber.error(error);
-    };
     const singleAttempt$ = new Observable<T>((subscriber) => {
       const controller = new AbortController();
       let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -450,27 +584,46 @@ export class HttpPdpClient implements PdpClient {
               );
               this.handleAuthFailure();
             }
-            emitError(subscriber, new Error(`PDP returned HTTP ${response.status}`));
+            subscriber.error(new Error(`PDP returned HTTP ${response.status}`));
             return;
           }
           if (!response.body) {
             this.logger.error(ERROR_STREAM_NO_BODY);
-            emitError(subscriber, new Error(ERROR_STREAM_NO_BODY));
+            subscriber.error(new Error(ERROR_STREAM_NO_BODY));
             return;
           }
-          reader = (response.body as ReadableStream<Uint8Array>).getReader();
+          const activeReader = (response.body as ReadableStream<Uint8Array>).getReader();
+          reader = activeReader;
           const decoder = new TextDecoder();
           let buffer = '';
+          // The first decision must arrive within timeoutMs; once the stream is
+          // live, any silence longer than inactivityTimeoutMs is treated as a
+          // dead connection so a half-open socket fails closed and reconnects
+          // instead of pinning the consumer to a stale decision (CR-11/AP-11).
+          let receivedAnyFrame = false;
+          const readWithLiveness = async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+            const livenessMs = receivedAnyFrame ? this.inactivityTimeoutMs : this.timeoutMs;
+            let livenessTimer: ReturnType<typeof setTimeout> | undefined;
+            const expiry = new Promise<never>((_, reject) => {
+              livenessTimer = setTimeout(() => reject(new Error(ERROR_STREAM_INACTIVITY)), livenessMs);
+            });
+            try {
+              return await Promise.race([activeReader.read(), expiry]);
+            } finally {
+              clearTimeout(livenessTimer);
+            }
+          };
           try {
             while (true) {
-              const { done, value } = await reader.read();
+              const { done, value } = await readWithLiveness();
               if (done) break;
+              receivedAnyFrame = true;
               buffer += decoder.decode(value, { stream: true });
               if (buffer.length > MAX_BUFFER_SIZE) {
                 this.logger.error(
                   `PDP streaming buffer exceeded ${MAX_BUFFER_SIZE} bytes. Aborting connection to prevent memory exhaustion.`,
                 );
-                emitError(subscriber, new Error(ERROR_BUFFER_OVERFLOW));
+                subscriber.error(new Error(ERROR_BUFFER_OVERFLOW));
                 return;
               }
               const lines = buffer.split('\n');
@@ -508,12 +661,12 @@ export class HttpPdpClient implements PdpClient {
                 }
               }
             }
-            emitError(subscriber, new Error(ERROR_STREAM_ENDED));
+            subscriber.error(new Error(ERROR_STREAM_ENDED));
           } catch (error) {
             if (controller.signal.aborted) return;
             const message = error instanceof Error ? error.message : String(error);
             this.logger.error(`PDP streaming read failed: ${message}`);
-            emitError(subscriber, error instanceof Error ? error : new Error(String(error)));
+            subscriber.error(error instanceof Error ? error : new Error(String(error)));
           }
         })
         .catch((error: unknown) => {
@@ -525,7 +678,7 @@ export class HttpPdpClient implements PdpClient {
             const message = error instanceof Error ? error.message : String(error);
             this.logger.error(`PDP streaming request to ${url} failed: ${message}`);
           }
-          emitError(subscriber, error instanceof Error ? error : new Error(String(error)));
+          subscriber.error(error instanceof Error ? error : new Error(String(error)));
         });
       return () => {
         clearTimeout(connectTimeout);
@@ -533,14 +686,31 @@ export class HttpPdpClient implements PdpClient {
         controller.abort();
       };
     });
+    // Counts only consecutive failures: a successful decision resets it so the
+    // backoff and WARN->ERROR escalation reflect the current outage, not the
+    // lifetime total (CR-08/AP-13). The INDETERMINATE seed is emitted after the
+    // reset, downstream of the tap, so it never resets the counter itself.
+    const consecutiveFailures = { count: 0 };
     return singleAttempt$.pipe(
+      tap(() => {
+        consecutiveFailures.count = 0;
+      }),
+      catchError((error: unknown) => {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        const seed = seedOnError ? from(seedOnError()) : EMPTY;
+        return concat(
+          seed,
+          throwError(() => failure),
+        );
+      }),
       retry({
         count: Infinity,
-        delay: (_error, retryCount) => {
-          const baseDelay = Math.min(this.retryBaseDelay * Math.pow(2, retryCount - 1), this.retryMaxDelay);
+        delay: () => {
+          const attempt = (consecutiveFailures.count += 1);
+          const baseDelay = Math.min(this.retryBaseDelay * Math.pow(2, attempt - 1), this.retryMaxDelay);
           const delay = Math.round(baseDelay * (0.5 + Math.random() * 0.5));
-          const message = `PDP streaming connection lost, reconnecting in ${delay}ms (attempt ${retryCount})`;
-          logReconnectAttempt(this.logger, retryCount, message);
+          const message = `PDP streaming connection lost, reconnecting in ${delay}ms (attempt ${attempt})`;
+          logReconnectAttempt(this.logger, attempt, message);
           return timer(delay);
         },
       }),

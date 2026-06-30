@@ -4,7 +4,7 @@ import { ProviderRegistry } from './ProviderRegistry';
 import { EnforcementPlan, ConstraintTag, PlanEntry } from './Plan';
 import { isDataCarryingSignal, type SignalKind } from './Signal';
 import { AccessDeniedError } from '../streaming/BoundarySignals';
-import type { ScopedHandler } from './api/index';
+import type { ConstraintHandlerProvider, ScopedHandler } from './api/index';
 
 const ERROR_UNHANDLED_OBLIGATION = 'Unhandled obligation';
 const WARN_UNHANDLED_ADVICE = 'Unhandled advice';
@@ -68,7 +68,7 @@ export class EnforcementPlanner {
   ): PlanEntry[] {
     const claims: ReadonlyArray<ScopedHandler>[] = [];
     for (const provider of this.providers.all()) {
-      const triples = provider.getHandlers(constraint);
+      const triples = this.claimHandlers(provider, constraint);
       if (triples.length > 0) claims.push(triples);
     }
 
@@ -92,6 +92,20 @@ export class EnforcementPlanner {
       constraint,
       handler: triple.handler,
     }));
+  }
+
+  // A throwing provider is treated as no-claim, so a malformed constraint
+  // fails closed via the synthetic substitute instead of escaping plan() as a
+  // raw exception.
+  private claimHandlers(provider: ConstraintHandlerProvider, constraint: unknown): ReadonlyArray<ScopedHandler> {
+    try {
+      return provider.getHandlers(constraint);
+    } catch (error) {
+      this.logger.warn(
+        `Constraint handler provider ${provider.constructor.name} failed to resolve a handler; treating as unresolved: ${(error as Error).message}`,
+      );
+      return [];
+    }
   }
 
   private isWellFormed(

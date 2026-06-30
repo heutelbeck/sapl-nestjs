@@ -295,41 +295,41 @@ describe('ContentFilter', () => {
         expect(handler({ name: 'Jane', ssn: '123' })).toEqual({ name: 'Jane' });
       });
 
-      test('whenRecursiveDescentPathThenThrowsError', () => {
+      test('whenRecursiveDescentPathThenRedactsEveryMatch', () => {
         const handler = getHandler({
           actions: [{ type: 'delete', path: '$..ssn' }],
         });
-        expect(() => handler({ ssn: '123' })).toThrow('Unsupported JSONPath: recursive descent');
+        expect(handler({ ssn: '123' })).toEqual({});
       });
 
-      test('whenBracketNotationPathThenThrowsError', () => {
+      test('whenArrayIndexPathThenTargetsTheIndexedElement', () => {
         const handler = getHandler({
           actions: [{ type: 'delete', path: '$.items[0]' }],
         });
-        expect(() => handler({ items: ['a'] })).toThrow('Unsupported JSONPath: bracket notation');
+        expect(handler({ items: ['a', 'b'] })).toEqual({ items: ['b'] });
       });
 
-      test('whenWildcardPathThenThrowsError', () => {
+      test('whenObjectWildcardPathThenTargetsEveryChild', () => {
         const handler = getHandler({
           actions: [{ type: 'delete', path: '$.store.*' }],
         });
-        expect(() => handler({ store: { a: 1 } })).toThrow('Unsupported JSONPath: wildcard');
+        expect(handler({ store: { a: 1, b: 2 } })).toEqual({ store: {} });
       });
 
-      test('whenArrayWildcardPathThenThrowsError', () => {
+      test('whenArrayWildcardPathThenRedactsEveryElement', () => {
         const handler = getHandler({
-          actions: [{ type: 'blacken', path: '$.users[*].email' }],
+          actions: [{ type: 'blacken', path: '$.users[*].email', replacement: '*' }],
         });
-        expect(() => handler({ users: [{ email: 'a@b.com' }] })).toThrow(
-          'Unsupported JSONPath: bracket notation',
-        );
+        expect(handler({ users: [{ email: 'a@b.com' }, { email: 'c@d.com' }] })).toEqual({
+          users: [{ email: '*******' }, { email: '*******' }],
+        });
       });
 
-      test('whenFilterExpressionPathThenThrowsError', () => {
+      test('whenFilterExpressionPathThenThrowsUnsupportedError', () => {
         const handler = getHandler({
           actions: [{ type: 'delete', path: '$.books[?(@.price<10)]' }],
         });
-        expect(() => handler({ books: [] })).toThrow('Unsupported JSONPath: bracket notation');
+        expect(() => handler({ books: [] })).toThrow('Unsupported JSONPath: filter expression');
       });
 
       test.each(['$.__proto__.polluted', '$.constructor.polluted', '$.prototype.polluted'])(

@@ -1,85 +1,174 @@
 import safe from 'safe-regex2';
 
-const BLACK_SQUARE = '\u2588';
-
-function getByPath(root: any, segments: string[]): any {
-  let cursor = root;
-  for (const segment of segments) {
-    if (DANGEROUS_SEGMENTS.has(segment)) return undefined;
-    if (cursor == null || typeof cursor !== 'object') return undefined;
-    cursor = cursor[segment];
-  }
-  return cursor;
-}
-
-function setByPath(root: any, segments: string[], value: any): void {
-  let cursor = root;
-  for (let depth = 0; depth < segments.length - 1; depth++) {
-    if (DANGEROUS_SEGMENTS.has(segments[depth])) return;
-    if (cursor == null || typeof cursor !== 'object') return;
-    cursor = cursor[segments[depth]];
-  }
-  const leaf = segments[segments.length - 1];
-  if (DANGEROUS_SEGMENTS.has(leaf)) return;
-  if (cursor != null && typeof cursor === 'object') {
-    cursor[leaf] = value;
-  }
-}
-
-function deleteByPath(root: any, segments: string[]): void {
-  let cursor = root;
-  for (let depth = 0; depth < segments.length - 1; depth++) {
-    if (DANGEROUS_SEGMENTS.has(segments[depth])) return;
-    if (cursor == null || typeof cursor !== 'object') return;
-    cursor = cursor[segments[depth]];
-  }
-  const leaf = segments[segments.length - 1];
-  if (DANGEROUS_SEGMENTS.has(leaf)) return;
-  if (cursor != null && typeof cursor === 'object') {
-    delete cursor[leaf];
-  }
-}
+const BLACK_SQUARE = '█';
+const MAX_BLACKEN = 1_000_000;
 
 const DANGEROUS_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
 
-function validatePath(path: string): void {
-  if (path.includes('..')) {
-    throw new Error(
-      `Unsupported JSONPath: recursive descent ('..') in '${path}'. Only simple dot paths are supported (e.g., '$.field.nested').`,
-    );
-  }
-  if (path.includes('[')) {
-    throw new Error(
-      `Unsupported JSONPath: bracket notation in '${path}'. Only simple dot paths are supported (e.g., '$.field.nested').`,
-    );
-  }
-  if (path.includes('*')) {
-    throw new Error(
-      `Unsupported JSONPath: wildcard ('*') in '${path}'. Only simple dot paths are supported (e.g., '$.field.nested').`,
-    );
+type Selector =
+  | { kind: 'child'; name: string }
+  | { kind: 'index'; index: number }
+  | { kind: 'wildcard' }
+  | { kind: 'recursive'; name: string };
+
+interface NodeRef {
+  container: any;
+  key: string | number;
+}
+
+function rejectDangerous(name: string, path: string): void {
+  if (DANGEROUS_SEGMENTS.has(name)) {
+    throw new Error(`Unsafe path segment '${name}' in '${path}'. Prototype-polluting paths are rejected.`);
   }
 }
 
-function validateSegments(segments: string[], path: string): void {
-  for (const segment of segments) {
-    if (DANGEROUS_SEGMENTS.has(segment)) {
-      throw new Error(
-        `Unsafe path segment '${segment}' in '${path}'. Prototype-polluting paths are rejected.`,
-      );
+function parseBracket(path: string, start: number): { selector: Selector; next: number } {
+  const close = path.indexOf(']', start);
+  if (close === -1) {
+    throw new Error(`Malformed JSONPath: unterminated bracket in '${path}'.`);
+  }
+  const content = path.slice(start + 1, close).trim();
+  const next = close + 1;
+  if (content === '*') {
+    return { selector: { kind: 'wildcard' }, next };
+  }
+  if (/^-?\d+$/.test(content)) {
+    return { selector: { kind: 'index', index: Number(content) }, next };
+  }
+  if ((content.startsWith("'") && content.endsWith("'")) || (content.startsWith('"') && content.endsWith('"'))) {
+    const name = content.slice(1, -1);
+    rejectDangerous(name, path);
+    return { selector: { kind: 'child', name }, next };
+  }
+  if (content.startsWith('?')) {
+    throw new Error(
+      `Unsupported JSONPath: filter expression in '${path}'. Filter predicates are not yet implemented.`,
+    );
+  }
+  throw new Error(`Unsupported JSONPath: bracket expression '[${content}]' in '${path}'.`);
+}
+
+function readName(path: string, start: number): { name: string; next: number } {
+  let end = start;
+  while (end < path.length && path[end] !== '.' && path[end] !== '[') {
+    end++;
+  }
+  return { name: path.slice(start, end), next: end };
+}
+
+function parsePath(path: string): Selector[] {
+  const selectors: Selector[] = [];
+  let i = 0;
+  if (path[i] === '$') i++;
+  while (i < path.length) {
+    const char = path[i];
+    if (char === '[') {
+      const { selector, next } = parseBracket(path, i);
+      selectors.push(selector);
+      i = next;
+      continue;
     }
+    if (char === '.') {
+      if (path[i + 1] === '.') {
+        i += 2;
+        if (path[i] === '*' || path[i] === '[') {
+          throw new Error(
+            `Unsupported JSONPath: recursive descent must name a field in '${path}'.`,
+          );
+        }
+        const { name, next } = readName(path, i);
+        rejectDangerous(name, path);
+        selectors.push({ kind: 'recursive', name });
+        i = next;
+        continue;
+      }
+      i++;
+      if (path[i] === '*') {
+        selectors.push({ kind: 'wildcard' });
+        i++;
+        continue;
+      }
+      const { name, next } = readName(path, i);
+      rejectDangerous(name, path);
+      selectors.push({ kind: 'child', name });
+      i = next;
+      continue;
+    }
+    const { name, next } = readName(path, i);
+    rejectDangerous(name, path);
+    selectors.push({ kind: 'child', name });
+    i = next;
+  }
+  return selectors;
+}
+
+function isObject(value: any): boolean {
+  return value != null && typeof value === 'object';
+}
+
+function collectRecursive(node: any, name: string, out: NodeRef[]): void {
+  if (!isObject(node)) return;
+  if (!Array.isArray(node) && Object.prototype.hasOwnProperty.call(node, name)) {
+    out.push({ container: node, key: name });
+  }
+  const children = Array.isArray(node) ? node : Object.values(node);
+  for (const child of children) {
+    collectRecursive(child, name, out);
   }
 }
 
-function parsePath(path: string): string[] {
-  validatePath(path);
-  let normalized = path;
-  if (normalized === '$') return [];
-  if (normalized.startsWith('$.')) {
-    normalized = normalized.substring(2);
+function expandSelector(value: any, selector: Selector, out: NodeRef[]): void {
+  switch (selector.kind) {
+    case 'child':
+      if (isObject(value) && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, selector.name)) {
+        out.push({ container: value, key: selector.name });
+      }
+      break;
+    case 'index':
+      if (Array.isArray(value) && selector.index >= 0 && selector.index < value.length) {
+        out.push({ container: value, key: selector.index });
+      }
+      break;
+    case 'wildcard':
+      if (Array.isArray(value)) {
+        for (let index = 0; index < value.length; index++) {
+          out.push({ container: value, key: index });
+        }
+      } else if (isObject(value)) {
+        for (const key of Object.keys(value)) {
+          if (!DANGEROUS_SEGMENTS.has(key)) out.push({ container: value, key });
+        }
+      }
+      break;
+    case 'recursive':
+      collectRecursive(value, selector.name, out);
+      break;
   }
-  const segments = normalized.split('.');
-  validateSegments(segments, path);
-  return segments;
+}
+
+function resolveRefs(root: any, selectors: Selector[]): NodeRef[] {
+  const wrapper = [root];
+  let current: NodeRef[] = [{ container: wrapper, key: 0 }];
+  for (const selector of selectors) {
+    const next: NodeRef[] = [];
+    for (const ref of current) {
+      expandSelector(ref.container[ref.key], selector, next);
+    }
+    current = next;
+  }
+  return current;
+}
+
+function refValue(ref: NodeRef): any {
+  return ref.container[ref.key];
+}
+
+function deleteRef(ref: NodeRef): void {
+  if (Array.isArray(ref.container) && typeof ref.key === 'number') {
+    ref.container.splice(ref.key, 1);
+  } else {
+    delete ref.container[ref.key];
+  }
 }
 
 function blacken(
@@ -100,6 +189,10 @@ function blacken(
 
   const finalLength = length !== undefined && length >= 0 ? length : maskedCount;
 
+  if (replacement.length * finalLength > MAX_BLACKEN) {
+    throw new Error("'length' of 'blacken' action exceeds the maximum permitted blacken length.");
+  }
+
   const prefix = chars.slice(0, left).join('');
   const suffix = chars.slice(chars.length - right).join('');
   const masked = replacement.repeat(finalLength);
@@ -116,29 +209,19 @@ function requireTextual(action: any, key: string): string {
   return action[key];
 }
 
-function applyAction(target: any, action: any): void {
-  if (action == null || typeof action !== 'object') {
-    throw new Error('An action in actions is not an object.');
-  }
-
-  const path = requireTextual(action, 'path');
-  const segments = parsePath(path);
-  const actionType = requireTextual(action, 'type').trim().toLowerCase();
-
+function applyActionToRef(ref: NodeRef, action: any, actionType: string): void {
   switch (actionType) {
-    case 'delete': {
-      deleteByPath(target, segments);
+    case 'delete':
+      deleteRef(ref);
       break;
-    }
-    case 'replace': {
+    case 'replace':
       if (!('replacement' in action)) {
         throw new Error('The action does not specify a replacement.');
       }
-      setByPath(target, segments, action.replacement);
+      ref.container[ref.key] = action.replacement;
       break;
-    }
     case 'blacken': {
-      const currentValue = getByPath(target, segments);
+      const currentValue = refValue(ref);
       if (typeof currentValue !== 'string') {
         throw new Error('The node identified by the path is not a text node.');
       }
@@ -155,12 +238,28 @@ function applyAction(target: any, action: any): void {
       if (blackenLength !== undefined && (typeof blackenLength !== 'number' || blackenLength < 0)) {
         throw new Error("'length' of 'blacken' action is not a valid non-negative number.");
       }
-      const blackened = blacken(currentValue, replacementChar, discloseLeft, discloseRight, blackenLength);
-      setByPath(target, segments, blackened);
+      if (blackenLength !== undefined && blackenLength > MAX_BLACKEN) {
+        throw new Error("'length' of 'blacken' action exceeds the maximum permitted blacken length.");
+      }
+      ref.container[ref.key] = blacken(currentValue, replacementChar, discloseLeft, discloseRight, blackenLength);
       break;
     }
     default:
       throw new Error(`Unknown action type: '${actionType}'.`);
+  }
+}
+
+function applyAction(target: any, action: any): void {
+  if (action == null || typeof action !== 'object') {
+    throw new Error('An action in actions is not an object.');
+  }
+
+  const path = requireTextual(action, 'path');
+  const selectors = parsePath(path);
+  const actionType = requireTextual(action, 'type').trim().toLowerCase();
+
+  for (const ref of resolveRefs(target, selectors)) {
+    applyActionToRef(ref, action, actionType);
   }
 }
 
@@ -180,9 +279,25 @@ function precompileConditions(conditions: any[]): void {
   }
 }
 
+function readConditionValue(element: any, path: string): any {
+  const refs = resolveRefs(element, parsePath(path));
+  if (refs.length === 0) {
+    // Fail closed: an unresolvable predicate path cannot be evaluated, so the
+    // obligation must deny rather than silently skip redaction.
+    throw new Error(`The path '${path}' defined in the constraint is not present in the data.`);
+  }
+  if (refs.length === 1) return refValue(refs[0]);
+  return refs.map(refValue);
+}
+
+// Numeric conditions compare with native double semantics, which is exact for every
+// value an IEEE-754 double can hold (all realistic identifiers and decimals). Values
+// that need more precision (integers above 2^53, longer decimals) are already collapsed
+// to doubles by JSON.parse before they reach here, so unlike the reference engine's
+// exact-decimal comparison they compare as doubles. JavaScript cannot recover precision
+// that was lost before the value became a number.
 function evaluateCondition(element: any, condition: any): boolean {
-  const segments = parsePath(condition.path ?? '');
-  const actual = getByPath(element, segments);
+  const actual = readConditionValue(element, condition.path ?? '');
   const expected = condition.value;
   const operator: string = condition.type;
 
@@ -230,6 +345,9 @@ export function getHandler(constraint: any): (value: any) => any {
       return copy;
     };
 
+    if (value instanceof Set) {
+      return new Set([...value].map(transform));
+    }
     if (Array.isArray(value)) {
       return value.map(transform);
     }
