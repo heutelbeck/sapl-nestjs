@@ -35,7 +35,7 @@ Data-layer query rewriting narrows results at the database rather than in memory
 
 ## Getting Started
 
-Requires Node 22+ and NestJS 11+.
+Requires Node 22+ and NestJS 11+, and a SAPL PDP of version 4.1.0 or higher.
 
 ```bash
 npm install @sapl/nestjs @toss/nestjs-aop nestjs-cls @nestjs-cls/transactional
