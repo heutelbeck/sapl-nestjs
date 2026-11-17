@@ -14,7 +14,7 @@ import { emissionKind, eventByName, stateByName } from './MealyTestSupport';
  * faithfully.
  *
  * Cross-language note: the CSV is the canonical table shared with the
- * Java and Python implementations. Java and TypeScript read it
+ * Java, Python, C#, and PHP implementations. Java and TypeScript read it
  * verbatim; Python applies the φ bijection at row-load time to map the
  * Java/TS `RapItem(outcome)` discriminator to the three Python event
  * types `RapItem` / `RapEpsilon` / `RapObligationFailure`, and skips
@@ -58,6 +58,26 @@ const parseEmissions = (raw: string): ReadonlyArray<string> => {
 const rows = loadRows();
 
 describe('MealyMachine cells', () => {
+  test('table covers every state and event outcome exactly once', () => {
+    const states = ['Pending', 'Permitting', 'Suspended', 'Terminated'];
+    const events = [
+      'PdpPermit:',
+      'PdpSuspend:',
+      'PdpDeny:',
+      'PdpError:',
+      'RapItem:Present',
+      'RapItem:Absent',
+      'RapItem:Failed',
+      'RapError:',
+      'RapComplete:',
+      'Cancel:',
+    ];
+    const expected = states.flatMap((state) => events.map((event) => `${state}:${event}`));
+    const actual = rows.map((row) => `${row.from}:${row.event}:${row.outcome}`);
+
+    expect(actual.sort()).toEqual(expected.sort());
+  });
+
   test.each(rows)('$from × $event($outcome) → $to : [$emissions]', (row) => {
     const sourceState = stateByName(row.from);
     const triggerEvent = eventByName(row.event, row.outcome);

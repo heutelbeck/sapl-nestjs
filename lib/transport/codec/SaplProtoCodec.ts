@@ -43,13 +43,28 @@ export class SaplProtoCodec {
     this.valueCodec = new SaplValueCodec();
   }
 
+  /**
+   * Secrets travel as an `ObjectValue` message. Without secrets the field is
+   * left out. Secrets that are not an object are refused here, because the
+   * PDP refuses them as well.
+   */
+  private encodeSecrets(secrets: unknown): unknown {
+    if (secrets === undefined) {
+      return undefined;
+    }
+    if (secrets === null || typeof secrets !== 'object' || Array.isArray(secrets)) {
+      throw new Error('The secrets of an authorization subscription must be an object.');
+    }
+    return this.valueCodec.encode(secrets).objectValue;
+  }
+
   encodeSubscription(subscription: AuthorizationSubscription): Buffer {
     const payload = {
       subject: this.valueCodec.encode(subscription.subject),
       action: this.valueCodec.encode(subscription.action),
       resource: this.valueCodec.encode(subscription.resource),
       environment: this.valueCodec.encode(subscription.environment),
-      secrets: this.valueCodec.encode(subscription.secrets),
+      secrets: this.encodeSecrets(subscription.secrets),
     };
     const message = this.subscriptionType.create(payload);
     return Buffer.from(this.subscriptionType.encode(message).finish());
@@ -86,7 +101,7 @@ export class SaplProtoCodec {
           action: this.valueCodec.encode(sub.action),
           resource: this.valueCodec.encode(sub.resource),
           environment: this.valueCodec.encode(sub.environment),
-          secrets: this.valueCodec.encode(sub.secrets),
+          secrets: this.encodeSecrets(sub.secrets),
         },
       });
       subs.push(identifiable);
